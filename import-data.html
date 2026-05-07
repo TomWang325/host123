@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>数据迁移工具</title>
+<style>
+*{box-sizing:border-box}
+body{font-family:'Segoe UI',Roboto,sans-serif;background:#f5f7fb;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;padding:20px}
+.card{background:#fff;border-radius:20px;padding:32px;max-width:600px;width:100%;box-shadow:0 8px 20px rgba(0,0,0,.08)}
+h2{margin:0 0 8px;color:#1f2d3d}
+.sub{color:#62748c;margin-bottom:24px;font-size:.9rem}
+.step{margin-bottom:20px;padding:14px;border-radius:12px;background:#f8fafc;border:1px solid #e2e8f0}
+.step-title{font-weight:600;color:#2c3e66;margin-bottom:6px}
+.step-detail{font-size:.8rem;color:#62748c}
+.btn{background:linear-gradient(135deg,#3b82f6,#8b5cf6);color:#fff;border:none;padding:12px 28px;border-radius:40px;font-size:1rem;font-weight:600;cursor:pointer;width:100%}
+.btn:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(59,130,246,.3)}
+.btn:disabled{background:#94a3b8;cursor:not-allowed;transform:none;box-shadow:none}
+.result{margin-top:16px;padding:12px;border-radius:12px;font-size:.85rem}
+.result.ok{background:#d1fae5;color:#059669}
+.result.err{background:#fee2e2;color:#b91c1c}
+code{background:#e2e8f0;padding:2px 6px;border-radius:4px;font-size:.85em}
+</style>
+</head>
+<body>
+<div class="card">
+<h2>旧数据迁移到新版本</h2>
+<div class="sub">将 Flask 版数据导入到 localStorage</div>
+
+<div class="step">
+<div class="step-title">用户账号</div>
+<div class="step-detail">
+将迁移 <b>3</b> 个用户：<code>ziy111</code> <code>hebei</code> <code>雄县</code><br>
+密码已重置为 <code>123456</code>，登录后请自行修改
+</div>
+</div>
+
+<div class="step">
+<div class="step-title">反馈数据</div>
+<div class="step-detail">
+将迁移 <b>1</b> 条反馈（含 <b>4</b> 条评论）
+</div>
+</div>
+
+<div class="step">
+<div class="step-title">图床图片</div>
+<div class="step-detail">
+将迁移 <b>4</b> 条元数据。注意：图片文件本身无法迁移（旧图片在服务器上），需重新上传
+</div>
+</div>
+
+<button class="btn" id="migrateBtn" onclick="doMigrate()">开始迁移</button>
+<div id="result"></div>
+</div>
+
+<script>
+// ==================== 旧数据（内嵌） ====================
+var OLD_USERS = {"ziy111":{"password":"scrypt:32768:8:1$KI7zPq7nrm5dcL1N$ec6dbfbf462ff3813f1019aa4d878707e88b4bf40f3575367fee0cbd3c780a57f5c80582e64fe412fa3d93766e39d367e4e19648389e938db07891915c848595","role":"admin","created_at":"2026-04-10T16:50:35.992200"},"hebei":{"password":"scrypt:32768:8:1$JSScSx0HgjhizaVU$565635276979ed422b1771b246b70f78a32fe7b97d53316e45fb6aee49716383653672dea5d30637e03a4dca7fb6277ce2e826c832d44bd807252906def1cc32","role":"user","created_at":"2026-04-10T17:02:58.205200"},"\u96c4\u53bf":{"password":"scrypt:32768:8:1$R4q1skczP36lzom2$f4b70486e4d75017e27c7d42b55244d7d2a866e689ea4aebf51382d0829acb8c9422ecd0ee8736c8effee2f12e2656946c92a96abb5dc47ea46848a28ff0ca74","role":"user","created_at":"2026-04-12T22:16:48.790585"}};
+
+var OLD_FEEDBACKS = [{"id":"43f4100187b84beba5cf2b09f6ec5a13","author":"hebei","original_author":"ziy111","content":"流量表没数据。","images":["http://127.0.0.1:8345/images/028a7a5c662c40378ba83aae479a98d2.png"],"status":"resolved","is_assigned_copy":true,"source_feedback_id":"3fab4e251dd5456bb3cd305347cf60a4","assigned_by":"ziy111","assigned_at":"2026-04-12T22:14:40.569303","created_at":"2026-04-12T22:14:40.569303","comments":[{"id":"676a4c4aa4ee446ba2d23f94c221e78d","author":"hebei","content":"收到，已经联系相关人员进行处置。","images":[],"created_at":"2026-04-12T22:16:27.439130"},{"id":"3683fb7eaaa14ad0a9cbffdeec5910bc","author":"雄县","content":"已处置完成","images":["http://127.0.0.1:8345/images/e45ab5b7771d4736a27c5fe04bf07898.png"],"created_at":"2026-04-12T22:52:57.560704"},{"id":"3dee28e4b1324ffba8b19b9ce4cad41c","author":"ziy111","content":"初步功能测试完成✅🥳","images":[],"created_at":"2026-04-13T00:11:59.656813"}],"resolved_at":"2026-04-12T22:53:24.501703","resolved_by":"hebei"}];
+
+var OLD_METADATA = [{"stored_name":"a8c4296eec8342a8b704fb2e0c21fb95.jpg","original_name":"1899351597.jpg","upload_time":"2026-04-10T17:02:28.874200","file_size":328011,"uploader":"ziy111"},{"stored_name":"6a0a0f44c8ca43129cc95222407c29f0.jpg","original_name":"1047982125.jpg","upload_time":"2026-04-10T17:03:32.663200","file_size":1206107,"uploader":"hebei"},{"stored_name":"028a7a5c662c40378ba83aae479a98d2.png","original_name":"R-C.png","upload_time":"2026-04-12T22:14:29.727492","file_size":61791,"uploader":"ziy111"},{"stored_name":"e45ab5b7771d4736a27c5fe04bf07898.png","original_name":"屏幕截图 2026-04-12 225238.png","upload_time":"2026-04-12T22:52:49.906688","file_size":4820,"uploader":"雄县"}];
+
+// ==================== 密码处理 ====================
+var PEPPER = 'host_img_2026_salt';
+async function sha256(str) {
+  var buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str + PEPPER));
+  return Array.from(new Uint8Array(buf)).map(function(b){return b.toString(16).padStart(2,'0');}).join('');
+}
+
+async function doMigrate() {
+  var btn = document.getElementById('migrateBtn');
+  var result = document.getElementById('result');
+  btn.disabled = true;
+  btn.textContent = '迁移中...';
+
+  try {
+    // 1. 迁移用户（密码重置为 123456）
+    var defaultPwd = await sha256('123456');
+    var newUsers = {};
+    Object.keys(OLD_USERS).forEach(function(u) {
+      newUsers[u] = {
+        password: defaultPwd,
+        role: OLD_USERS[u].role || 'user',
+        created_at: OLD_USERS[u].created_at
+      };
+    });
+    // 保留已有的 admin 和当前迁移用户
+    var existing = JSON.parse(localStorage.getItem('host_users') || '{}');
+    Object.assign(existing, newUsers);
+    localStorage.setItem('host_users', JSON.stringify(existing));
+
+    // 2. 迁移反馈（修复图片引用为纯文件名）
+    function fixImages(arr) {
+      return (arr || []).map(function(url) {
+        if (url.indexOf('/') >= 0) return url.split('/').pop();
+        return url;
+      });
+    }
+    var newFeedbacks = OLD_FEEDBACKS.map(function(fb) {
+      var f = Object.assign({}, fb);
+      f.images = fixImages(fb.images);
+      if (f.comments) {
+        f.comments = f.comments.map(function(c) {
+          var cc = Object.assign({}, c);
+          cc.images = fixImages(c.images || []);
+          return cc;
+        });
+      }
+      return f;
+    });
+    localStorage.setItem('host_feedbacks', JSON.stringify(newFeedbacks));
+
+    // 3. 迁移图片元数据
+    var newMeta = OLD_METADATA.map(function(m) {
+      return {
+        stored_name: m.stored_name,
+        original_name: m.original_name,
+        upload_time: m.upload_time,
+        file_size: m.file_size,
+        uploader: m.uploader,
+        url: '',
+        _base64: false
+      };
+    });
+    localStorage.setItem('host_metadata', JSON.stringify(newMeta));
+
+    // 4. 清空通知
+    localStorage.setItem('host_notifications', JSON.stringify([]));
+
+    result.innerHTML = '<div class="result ok">' +
+      '✅ 迁移成功！<br>' +
+      '用户: ' + Object.keys(newUsers).join(', ') + '<br>' +
+      '反馈: ' + newFeedbacks.length + ' 条<br>' +
+      '图片元数据: ' + newMeta.length + ' 条<br>' +
+      '<b>密码已统一重置为 123456</b>，请用 <a href="index.html">index.html</a> 登录后修改密码' +
+      '</div>';
+    btn.textContent = '迁移完成';
+  } catch(e) {
+    result.innerHTML = '<div class="result err">❌ 迁移失败: ' + e.message + '</div>';
+    btn.disabled = false;
+    btn.textContent = '重试迁移';
+  }
+}
+</script>
+</body>
+</html>
