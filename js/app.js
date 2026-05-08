@@ -1401,6 +1401,7 @@ function renderGalleryPage() {
 }
 
 function renderGallery(images) {
+  // 原渲染逻辑（保持不变）
   $('statsInfo').textContent = images.length + ' 张图片';
   var container = $('galleryContainer');
   if (!images.length) {
@@ -1429,6 +1430,7 @@ function renderGallery(images) {
   });
   container.innerHTML = html;
 
+  // 事件绑定（保持不变）
   container.querySelectorAll('.card-img').forEach(function (img) {
     img.addEventListener('click', function (e) {
       e.stopPropagation();
@@ -1472,6 +1474,17 @@ function renderGallery(images) {
       }
     });
   });
+
+  // ---------- 新增修复代码：延迟主动更新签名图片 ----------
+  setTimeout(() => {
+    images.forEach(img => {
+      if (img.stored_name) {
+        ensureSignedUrl(img.stored_name).then(signedUrl => {
+          updateSingleImageSrc(img.stored_name, signedUrl);
+        }).catch(err => console.warn('签名失败', img.stored_name, err));
+      }
+    });
+  }, 100);
 }
 
 function refreshGallery() {
