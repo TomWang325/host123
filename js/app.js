@@ -1092,7 +1092,7 @@ function renderFeedbackList() {
         var url = meta ? getImageUrl(meta) : '';
         if (!url && (imgName.startsWith('http') || imgName.startsWith('data:'))) url = imgName;
         if (url) {
-          html += `<img class="feedback-img" src="${url}" onclick="openImageModal('${url.replace(/'/g, "\\'")}')" loading="lazy" onerror="this.onerror=null;this.src=this.src+'?retry='+Date.now();">`;
+          html += '<img class="feedback-img" data-stored="' + imgName + '" src="' + url + '" onclick="openImageModal(\'' + url.replace(/'/g, "\\'") + '\')" loading="lazy" onerror="this.onerror=null;this.src=this.src+\'?retry=\'+Date.now();">';
         }
       });
       html += '</div>';
@@ -1131,7 +1131,7 @@ function renderFeedbackList() {
           var meta = allImagesCache.find(function (m) { return m.stored_name === imgName; });
           var url = meta ? getImageUrl(meta) : '';
           if (!url && (imgName.startsWith('http') || imgName.startsWith('data:'))) url = imgName;
-          if (url) html += `<img class="comment-img" src="${url}" onclick="openImageModal('${url.replace(/'/g, "\\'")}')" onerror="this.onerror=null;this.src=this.src+'?retry='+Date.now();">`;
+          if (url) html += '<img class="comment-img" data-stored="' + imgName + '" src="' + url + '" onclick="openImageModal(\'' + url.replace(/'/g, "\\'") + '\')" onerror="this.onerror=null;this.src=this.src+\'?retry=\'+Date.now();">';
         });
         html += '</div>';
       }
@@ -1155,6 +1155,21 @@ function renderFeedbackList() {
 
   container.innerHTML = html;
   bindFeedbackEvents();
+    // 延迟更新反馈列表中的图片签名
+  setTimeout(() => {
+    const allStoredNames = new Set();
+    document.querySelectorAll('.feedback-img[data-stored], .comment-img[data-stored]').forEach(img => {
+      const stored = img.getAttribute('data-stored');
+      if (stored) allStoredNames.add(stored);
+    });
+    allStoredNames.forEach(storedName => {
+      ensureSignedUrl(storedName).then(signedUrl => {
+        document.querySelectorAll(`.feedback-img[data-stored="${storedName}"], .comment-img[data-stored="${storedName}"]`).forEach(img => {
+          if (img.src !== signedUrl) img.src = signedUrl;
+        });
+      }).catch(err => console.warn('更新反馈图片失败', storedName, err));
+    });
+  }, 150);
 }
 
 function bindFeedbackEvents() {
