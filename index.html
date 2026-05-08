@@ -2,248 +2,217 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=yes">
-<title>图床 - 问题反馈协作系统</title>
-<link rel="stylesheet" href="css/style.css">
-<script src="https://unpkg.com/cos-js-sdk-v5/dist/cos-js-sdk-v5.min.js"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>图床 & 反馈系统</title>
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
-
-<!-- ========== 登录页 ========== -->
-<div class="page-view login-page" id="page-login">
-  <div class="auth-card">
-    <h1>图床登录</h1>
-    <div class="auth-sub">请输入用户名和密码</div>
-    <div class="error-msg" id="loginError" style="display:none"></div>
-    <form id="loginForm">
-      <div class="input-group">
-        <label>用户名</label>
-        <input type="text" id="loginUsername" required autofocus>
-      </div>
-      <div class="input-group">
-        <label>密码</label>
-        <input type="password" id="loginPassword" required>
-      </div>
-      <button type="submit" class="auth-btn">登 录</button>
-    </form>
-    <div class="auth-footer">
-      没有账号？ <a id="toRegisterLink">立即注册</a><br>
-      <a id="cosSetupLink" style="display:none;color:#d97706;font-size:0.7rem;">COS未配置，点此设置</a>
+<div class="container">
+  <div class="header">
+    <h1>图床 & 反馈系统</h1>
+    <p>基于腾讯云COS + GitHub Pages</p>
+    <div class="user-info">
+      <span id="headerUsername"></span>
+      <span id="headerRole"></span>
+      <a href="javascript:void(0)" id="changePwdLink">修改密码</a>
+      <a href="javascript:void(0)" class="logout-link" id="logoutBtn">退出登录</a>
+    </div>
+    <div class="notification-icon" id="notificationIcon">
+      🔔
+      <span class="unread-badge" id="unreadBadge">0</span>
     </div>
   </div>
-</div>
 
-<!-- ========== COS 配置弹窗 ========== -->
-<div class="user-panel-overlay" id="cosSetupOverlay">
-  <div class="user-panel" style="max-width:420px;">
-    <button class="user-panel-close" id="closeCosSetupBtn">&times;</button>
-    <h2>COS 存储配置</h2>
-    <div id="cosSetupError" class="error-msg" style="display:none;margin-bottom:12px;"></div>
-    <div class="input-group">
-      <label>SecretId</label>
-      <input type="text" id="cosSetupId" placeholder="AKIDxxxxxxxx">
-    </div>
-    <div class="input-group">
-      <label>SecretKey</label>
-      <input type="password" id="cosSetupKey" placeholder="你的SecretKey">
-    </div>
-    <div class="input-group">
-      <label>存储桶名称（含APPID）</label>
-      <input type="text" id="cosSetupBucket" placeholder="my-data-1-1312418202">
-    </div>
-    <div class="input-group">
-      <label>地域</label>
-      <input type="text" id="cosSetupRegion" placeholder="ap-beijing">
-    </div>
-    <button class="auth-btn" id="cosSetupSaveBtn">保存配置</button>
+  <div id="cosConfigBanner" class="cos-config-banner">
+    COS未配置，点此 <a href="javascript:void(0)" id="cosSetupLink">设置</a>
   </div>
-</div>
 
-<!-- ========== 注册页 ========== -->
-<div class="page-view login-page" id="page-register" style="display:none">
-  <div class="auth-card">
-    <h1>注册新账号</h1>
-    <div class="auth-sub">请牢记账号密码</div>
-    <div class="error-msg" id="regError" style="display:none"></div>
-    <form id="regForm">
-      <div class="input-group">
-        <label>用户名</label>
-        <input type="text" id="regUsername" required autofocus>
+  <div id="navTabs" class="nav-tabs"></div>
+
+  <!-- 登录页 -->
+  <div id="page-login" class="page-view">
+    <div class="login-page">
+      <div class="auth-card">
+        <h1>登录</h1>
+        <div class="auth-sub">欢迎使用图床系统</div>
+        <div id="loginError" class="error-msg" style="display:none;"></div>
+        <form id="loginForm">
+          <div class="input-group">
+            <label>用户名</label>
+            <input type="text" id="loginUsername" autocomplete="username">
+          </div>
+          <div class="input-group">
+            <label>密码</label>
+            <input type="password" id="loginPassword" autocomplete="current-password">
+          </div>
+          <button type="submit" class="auth-btn">登录</button>
+        </form>
+        <div class="auth-footer">
+          没有账号？<a id="toRegisterLink">立即注册</a>
+        </div>
       </div>
-      <div class="input-group">
-        <label>密码</label>
-        <input type="password" id="regPassword" required>
-      </div>
-      <button type="submit" class="auth-btn">注 册</button>
-    </form>
-    <div class="auth-footer">
-      已有账号？ <a id="toLoginLink">去登录</a>
     </div>
   </div>
-</div>
 
-<!-- ========== 主页面（反馈系统） ========== -->
-<div class="page-view" id="page-main" style="display:none">
-  <div class="container">
-    <div class="cos-config-banner" id="cosConfigBanner">
-      腾讯云COS未配置，图片将以Base64存储在浏览器（限2MB）。F12控制台执行 <code>setupCos('SecretId','SecretKey')</code> 配置。
-    </div>
-
-    <div class="header">
-      <h1>问题反馈协作系统</h1>
-      <div class="user-info">
-        <span id="headerUsername"></span> (<span id="headerRole"></span>)
-        <span class="notification-icon" id="notificationIcon">
-          &#128276; <span class="unread-badge" id="unreadBadge">0</span>
-        </span>
-        <a href="javascript:void(0)" id="galleryNavLink" class="admin-link">图床管理</a>
-        <a href="javascript:void(0)" id="changePwdLink" class="admin-link">修改密码</a>
-        <a href="javascript:void(0)" id="logoutBtn" class="logout-link">登出</a>
+  <!-- 注册页 -->
+  <div id="page-register" class="page-view">
+    <div class="login-page">
+      <div class="auth-card">
+        <h1>注册</h1>
+        <div id="regError" class="error-msg" style="display:none;"></div>
+        <form id="regForm">
+          <div class="input-group">
+            <label>用户名</label>
+            <input type="text" id="regUsername" autocomplete="username">
+          </div>
+          <div class="input-group">
+            <label>密码</label>
+            <input type="password" id="regPassword" autocomplete="new-password">
+          </div>
+          <button type="submit" class="auth-btn">注册</button>
+        </form>
+        <div class="auth-footer">
+          已有账号？<a id="toLoginLink">立即登录</a>
+        </div>
       </div>
-      <p>请尽量将反馈的问题描述具体，上传清晰图片</p>
     </div>
+  </div>
 
-    <!-- 导航标签 -->
-    <div class="nav-tabs" id="navTabs"></div>
-
-    <!-- 反馈表单 -->
+  <!-- 主页面（反馈） -->
+  <div id="page-main" class="page-view">
     <div class="feedback-card">
-      <div class="feedback-form-title">提交问题反馈</div>
-      <textarea id="feedbackContent" class="feedback-textarea" rows="4" placeholder="请详细描述您的问题或建议..."></textarea>
+      <div class="feedback-form-title">提交反馈</div>
+      <textarea class="feedback-textarea" id="feedbackContent" placeholder="请输入反馈内容..."></textarea>
       <div class="image-select-area">
         <div class="drawer-header" id="drawerHeader">
           <div class="drawer-header-left">
             <span class="drawer-arrow" id="drawerArrow">▶</span>
-            <span class="image-select-label">关联图片（可选，点击选择已有图片）</span>
+            <span class="image-select-label">选择已有图片</span>
+            <span class="selected-hint" id="selectedHint"></span>
           </div>
-          <span id="selectedHint" class="selected-hint"></span>
         </div>
         <div class="drawer-content" id="drawerContent">
-          <div id="existingImagesList" class="existing-images">
-            <div class="loading-text">加载图片中...</div>
+          <div class="existing-images" id="existingImagesList"></div>
+          <div class="upload-new-area">
+            <span>上传新图片：</span>
+            <button class="upload-new-btn" id="uploadForFeedbackBtn">选择图片</button>
+            <input type="file" id="feedbackFileInput" accept="image/*" style="display:none;">
+            <span id="uploadProgress"></span>
           </div>
         </div>
-        <div class="upload-new-area">
-          <span>或者上传新图片：</span>
-          <button type="button" class="upload-new-btn" id="uploadForFeedbackBtn">上传图片到图床</button>
-          <input type="file" id="feedbackFileInput" accept="image/png,image/jpeg,image/jpg,image/gif,image/webp,image/bmp" style="display:none">
-          <span id="uploadProgress" style="font-size:.75rem;color:#3b82f6;"></span>
-        </div>
       </div>
-      <button id="submitFeedbackBtn" class="submit-feedback-btn">提交反馈</button>
+      <button class="submit-feedback-btn" id="submitFeedbackBtn">提交反馈</button>
     </div>
 
-    <!-- 筛选栏 -->
     <div class="filter-bar">
-      <span class="filter-label">筛选反馈：</span>
+      <div class="filter-label">按用户筛选：</div>
       <div class="filter-buttons" id="filterButtons"></div>
-      <span class="filter-label" style="margin-left:16px">状态：</span>
+      <div class="filter-label" style="margin-left:20px;">状态：</div>
       <div class="filter-buttons" id="statusFilterButtons"></div>
-      <div class="admin-view-toggle" id="adminViewArea" style="display:none">
-        <label><input type="checkbox" id="adminViewToggle"> 管理员视图（查看全部）</label>
+      <div class="admin-view-toggle" id="adminViewArea" style="display:none;">
+        <label><input type="checkbox" id="adminViewToggle"> 管理员查看全部</label>
       </div>
     </div>
 
-    <div id="feedbackList" class="feedback-list">
-      <div class="empty-state">暂无反馈，提交第一条反馈吧</div>
-    </div>
-    <footer>Copyright 2026 by hebei.TC | 数据存储在浏览器localStorage</footer>
+    <div class="feedback-list" id="feedbackList"></div>
   </div>
-</div>
 
-<!-- ========== 图床管理页 ========== -->
-<div class="page-view" id="page-gallery" style="display:none">
-  <div class="container">
-    <div class="cos-config-banner" id="cosConfigBanner2">
-      腾讯云COS未配置，图片将以Base64存储（限2MB）。请编辑 <code>js/app.js</code> 中的 <code>COS_CONFIG</code>。
-    </div>
-
-    <div class="header">
-      <h1>图床管理 - 所有图片</h1>
-      <div class="user-info">
-        <span id="headerUsername2"></span> (<span id="headerRole2"></span>)
-        <span class="notification-icon" id="notificationIcon2">
-          &#128276; <span class="unread-badge" id="unreadBadge2">0</span>
-        </span>
-        <a href="javascript:void(0)" class="admin-link" onclick="navigate('main')">← 返回反馈系统</a>
-        <a href="javascript:void(0)" id="changePwdLink2" class="admin-link">修改密码</a>
-        <a href="javascript:void(0)" id="logoutBtn2" class="logout-link">登出</a>
-      </div>
-    </div>
-
-    <!-- 导航标签 -->
-    <div class="nav-tabs" id="navTabs2"></div>
-
+  <!-- 图床管理 -->
+  <div id="page-gallery" class="page-view">
     <div class="toolbar">
-      <div class="stats" id="statsInfo">加载图片中...</div>
+      <div class="stats" id="statsInfo">0 张图片</div>
       <div class="actions">
-        <button class="upload-new-btn" id="galleryUploadBtn">上传图片</button>
-        <input type="file" id="galleryFileInput" accept="image/png,image/jpeg,image/jpg,image/gif,image/webp,image/bmp" style="display:none">
-        <button class="select-all-btn" id="selectAllBtn">全选</button>
-        <button class="copy-selected-btn" id="copySelectedBtn">复制选中链接</button>
         <button class="refresh-btn" id="refreshGalleryBtn">刷新</button>
+        <button class="select-all-btn" id="selectAllBtn">全选/取消</button>
+        <button class="copy-selected-btn" id="copySelectedBtn">复制选中链接</button>
+        <button class="upload-new-btn" id="galleryUploadBtn">上传图片</button>
+        <input type="file" id="galleryFileInput" accept="image/*" style="display:none;">
       </div>
     </div>
-
-    <div id="galleryContainer" class="gallery-grid">
-      <div class="empty-state">暂无图片，请先上传</div>
-    </div>
-    <footer>图片存储在浏览器localStorage | 支持管理员或上传者删除 | 点击图片可放大</footer>
+    <div class="gallery-grid" id="galleryContainer"></div>
   </div>
+
+  <!-- 消息面板 -->
+  <div class="notification-panel" id="notificationPanel">
+    <div class="notification-header">
+      <div class="notification-title">消息中心</div>
+      <div class="notification-actions">
+        <button class="notification-action-btn" id="markAllReadBtn">全部已读</button>
+        <button class="notification-action-btn" id="deleteAllReadBtn">删除已读</button>
+      </div>
+    </div>
+    <div class="notification-list" id="notificationList"></div>
+  </div>
+
+  <!-- 图片预览模态框 -->
+  <div class="modal" id="imageModal">
+    <span class="close-modal" id="closeModalBtn">&times;</span>
+    <div class="modal-content">
+      <img class="modal-img" id="modalImg">
+    </div>
+  </div>
+
+  <!-- 用户管理面板 -->
+  <div class="user-panel-overlay" id="userPanelOverlay">
+    <div class="user-panel">
+      <button class="user-panel-close" id="closeUserPanelBtn">&times;</button>
+      <h2>用户列表</h2>
+      <div id="userPanelBody"></div>
+    </div>
+  </div>
+
+  <!-- 修改密码面板 -->
+  <div class="user-panel-overlay" id="pwdPanelOverlay">
+    <div class="user-panel">
+      <button class="user-panel-close" id="closePwdPanelBtn">&times;</button>
+      <h2>修改密码</h2>
+      <div id="pwdError" class="error-msg" style="display:none;"></div>
+      <div class="input-group">
+        <label>当前密码</label>
+        <input type="password" id="oldPassword">
+      </div>
+      <div class="input-group">
+        <label>新密码</label>
+        <input type="password" id="newPassword1">
+      </div>
+      <div class="input-group">
+        <label>确认新密码</label>
+        <input type="password" id="newPassword2">
+      </div>
+      <button class="auth-btn" id="changePwdBtn">确认修改</button>
+    </div>
+  </div>
+
+  <!-- COS配置面板 -->
+  <div class="user-panel-overlay" id="cosSetupOverlay">
+    <div class="user-panel">
+      <button class="user-panel-close" id="closeCosSetupBtn">&times;</button>
+      <h2>COS存储配置</h2>
+      <div id="cosSetupError" class="error-msg" style="display:none;"></div>
+      <div class="input-group">
+        <label>SecretId</label>
+        <input type="text" id="cosSetupId">
+      </div>
+      <div class="input-group">
+        <label>SecretKey</label>
+        <input type="password" id="cosSetupKey">
+      </div>
+      <div class="input-group">
+        <label>存储桶名称(含APPID)</label>
+        <input type="text" id="cosSetupBucket">
+      </div>
+      <div class="input-group">
+        <label>地域</label>
+        <input type="text" id="cosSetupRegion" placeholder="例如 ap-beijing">
+      </div>
+      <button class="auth-btn" id="cosSetupSaveBtn">保存配置</button>
+    </div>
+  </div>
+
+  <div class="toast-msg" id="toastMsg"></div>
 </div>
 
-<!-- ========== 共享组件 ========== -->
-<div id="toastMsg" class="toast-msg"></div>
-
-<div id="notificationPanel" class="notification-panel">
-  <div class="notification-header">
-    <span class="notification-title">消息中心</span>
-    <div class="notification-actions">
-      <button class="notification-action-btn" id="markAllReadBtn">全部已读</button>
-      <button class="notification-action-btn" id="deleteAllReadBtn">删除已读</button>
-    </div>
-  </div>
-  <div class="notification-list" id="notificationList">
-    <div class="empty-notifications">暂无消息</div>
-  </div>
-</div>
-
-<div id="imageModal" class="modal">
-  <span class="close-modal" id="closeModalBtn">&times;</span>
-  <div class="modal-content">
-    <img class="modal-img" id="modalImg" alt="">
-  </div>
-</div>
-
-<div id="userPanelOverlay" class="user-panel-overlay">
-  <div class="user-panel">
-    <button class="user-panel-close" id="closeUserPanelBtn">&times;</button>
-    <h2>用户列表</h2>
-    <div id="userPanelBody"></div>
-  </div>
-</div>
-
-<div id="pwdPanelOverlay" class="user-panel-overlay">
-  <div class="user-panel" style="max-width:380px;">
-    <button class="user-panel-close" id="closePwdPanelBtn">&times;</button>
-    <h2>修改密码</h2>
-    <div id="pwdError" class="error-msg" style="display:none;margin-bottom:12px;"></div>
-    <div class="input-group">
-      <label>当前密码</label>
-      <input type="password" id="oldPassword" placeholder="请输入当前密码">
-    </div>
-    <div class="input-group">
-      <label>新密码</label>
-      <input type="password" id="newPassword1" placeholder="请输入新密码">
-    </div>
-    <div class="input-group">
-      <label>确认新密码</label>
-      <input type="password" id="newPassword2" placeholder="请再次输入新密码">
-    </div>
-    <button class="auth-btn" id="changePwdBtn">确认修改</button>
-  </div>
-</div>
-
-<script src="js/app.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/cos-js-sdk-v5/dist/cos-js-sdk-v5.min.js"></script>
+<script src="app.js"></script>
 </body>
 </html>
