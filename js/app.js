@@ -127,20 +127,70 @@ async function hashPassword(password) {
   return hashArray.map(function (b) { return b.toString(16).padStart(2, '0'); }).join('');
 }
 
-// ==================== AES-GCM 加密 ====================
+// ==================== AES-GCM 加密（多设备统一盐） ====================
 var ENC_KEY = null;
-var ENC_KEY_RAW = null;
+var ENC_SALT_READY = false;
+
+// 从 COS 读取或生成全局盐（存储路径：host_data/_enc_salt.txt）
+async function initEncSalt() {
+  if (!getCosClient()) {
+    // 未配置 COS，使用本地随机盐（不支持多设备同步）
+    let salt = localStorage.getItem('host_enc_salt');
+    if (!salt) {
+      let saltBytes = crypto.getRandomValues(new Uint8Array(16));
+      salt = Array.from(saltBytes).map(b => b.toString(16).padStart(2,'0')).join('');
+      localStorage.setItem('host_enc_salt', salt);
+    }
+    return salt;
+  }
+
+  // 已配置 COS → 尝试从 COS 读取全局盐
+  let cos = getCosClient();
+  let remoteSalt = null;
+  try {
+    let res = await new Promise((resolve, reject) => {
+      cos.getObject({
+        Bucket: COS_CONFIG.Bucket,
+        Region: COS_CONFIG.Region,
+        Key: 'host_data/_enc_salt.txt'
+      }, (err, data) => {
+        if (err) reject(err);
+        else resolve(data.Body.toString('utf-8'));
+      });
+    });
+    remoteSalt = res.trim();
+  } catch(e) { /* 文件不存在 */ }
+
+  if (remoteSalt && remoteSalt.length === 32) {
+    // 使用远程盐，同时存入本地缓存
+    localStorage.setItem('host_enc_salt', remoteSalt);
+    return remoteSalt;
+  } else {
+    // 生成本地新盐并上传到 COS
+    let saltBytes = crypto.getRandomValues(new Uint8Array(16));
+    let newSalt = Array.from(saltBytes).map(b => b.toString(16).padStart(2,'0')).join('');
+    localStorage.setItem('host_enc_salt', newSalt);
+    // 上传到 COS（忽略失败）
+    try {
+      await new Promise((resolve, reject) => {
+        cos.putObject({
+          Bucket: COS_CONFIG.Bucket,
+          Region: COS_CONFIG.Region,
+          Key: 'host_data/_enc_salt.txt',
+          Body: newSalt,
+          ContentType: 'text/plain'
+        }, err => err ? reject(err) : resolve());
+      });
+    } catch(e) { console.warn('上传盐失败', e); }
+    return newSalt;
+  }
+}
 
 async function getEncKey() {
   if (ENC_KEY) return ENC_KEY;
-  var stored = localStorage.getItem('host_enc_salt');
-  if (!stored) {
-    var saltBytes = crypto.getRandomValues(new Uint8Array(16));
-    stored = Array.from(saltBytes).map(function (b) { return b.toString(16).padStart(2, '0'); }).join('');
-    localStorage.setItem('host_enc_salt', stored);
-  }
-  var salt = new TextEncoder().encode(stored);
-  var baseKey = await crypto.subtle.importKey('raw', new TextEncoder().encode('host_storage_v1_secret'), 'PBKDF2', false, ['deriveKey']);
+  let saltHex = await initEncSalt();
+  let salt = new TextEncoder().encode(saltHex);
+  let baseKey = await crypto.subtle.importKey('raw', new TextEncoder().encode('host_storage_v1_secret'), 'PBKDF2', false, ['deriveKey']);
   ENC_KEY = await crypto.subtle.deriveKey(
     { name: 'PBKDF2', salt: salt, iterations: 200000, hash: 'SHA-256' },
     baseKey, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']
@@ -149,11 +199,11 @@ async function getEncKey() {
 }
 
 async function encryptData(plaintext) {
-  var key = await getEncKey();
-  var iv = crypto.getRandomValues(new Uint8Array(12));
-  var encoded = new TextEncoder().encode(plaintext);
-  var ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, key, encoded);
-  var combined = new Uint8Array(iv.length + new Uint8Array(ciphertext).length);
+  let key = await getEncKey();
+  let iv = crypto.getRandomValues(new Uint8Array(12));
+  let encoded = new TextEncoder().encode(plaintext);
+  let ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, key, encoded);
+  let combined = new Uint8Array(iv.length + new Uint8Array(ciphertext).length);
   combined.set(iv);
   combined.set(new Uint8Array(ciphertext), iv.length);
   return btoa(String.fromCharCode.apply(null, combined));
@@ -161,13 +211,13 @@ async function encryptData(plaintext) {
 
 async function decryptData(b64) {
   try {
-    var key = await getEncKey();
-    var raw = Uint8Array.from(atob(b64), function (c) { return c.charCodeAt(0); });
-    var iv = raw.slice(0, 12);
-    var ciphertext = raw.slice(12);
-    var decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv }, key, ciphertext);
+    let key = await getEncKey();
+    let raw = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+    let iv = raw.slice(0, 12);
+    let ciphertext = raw.slice(12);
+    let decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv }, key, ciphertext);
     return new TextDecoder().decode(decrypted);
-  } catch (e) { return null; }
+  } catch(e) { return null; }
 }
 
 // ==================== COS JSON 数据读写 ====================
@@ -771,8 +821,8 @@ function renderExistingImages() {
     var imgUrl = getImageUrl(img);
     var style = 'position:relative;';
     html += '<div class="existing-image-item' + (isSelected ? ' selected' : '') + '" data-stored="' + img.stored_name + '" style="' + style + '">' +
-      '<img src="' + imgUrl + '" alt="' + escapeHtml(img.original_name) + '" loading="lazy" onerror="this.style.display=\'none\';this.nextSibling.style.display=\'flex\';">' +
-      '<div class="img-placeholder" style="display:none;width:80px;height:80px;align-items:center;justify-content:center;background:#e2e8f0;border-radius:10px;color:#94a3b8;font-size:10px;">无预览</div>' +
+      '<img src="' + imgUrl + '" alt="' + escapeHtml(img.original_name) + '" loading="lazy" onerror="this.onerror=null;this.src=this.src+\'?retry=\'+Date.now();this.nextSibling.style.display=\'flex\';" onload="this.nextSibling.style.display=\'none\';">' +
+      '<div class="img-placeholder" style="display:none;width:80px;height:80px;align-items:center;justify-content:center;background:#e2e8f0;border-radius:10px;color:#94a3b8;font-size:10px;">加载失败</div>' +
       (isSelected ? '<span class="remove-icon" style="position:absolute;top:2px;right:2px;background:rgba(0,0,0,.6);color:#fff;border-radius:50%;width:18px;height:18px;display:flex;align-items:center;justify-content:center;font-size:12px;cursor:pointer;">✕</span>' : '') +
       '</div>';
   });
@@ -945,7 +995,7 @@ function renderFeedbackList() {
         var url = meta ? getImageUrl(meta) : '';
         if (!url && (imgName.startsWith('http') || imgName.startsWith('data:'))) url = imgName;
         if (url) {
-          html += '<img class="feedback-img" src="' + url + '" onclick="openImageModal(\'' + url.replace(/'/g, "\\'") + '\')" loading="lazy" onerror="this.style.display=\'none\'">';
+          html += '<img class="feedback-img" src="' + url + '" onclick="openImageModal(\'' + url.replace(/'/g, "\\'") + '\')" loading="lazy" onerror="this.onerror=null;this.src=this.src+\'?retry=\'+Date.now();">';
         }
       });
       html += '</div>';
@@ -984,7 +1034,7 @@ function renderFeedbackList() {
           var meta = allImagesCache.find(function (m) { return m.stored_name === imgName; });
           var url = meta ? getImageUrl(meta) : '';
           if (!url && (imgName.startsWith('http') || imgName.startsWith('data:'))) url = imgName;
-          if (url) html += '<img class="comment-img" src="' + url + '" onclick="openImageModal(\'' + url.replace(/'/g, "\\'") + '\')" onerror="this.style.display=\'none\'">';
+          if (url) html += '<img class="comment-img" src="' + url + '" onclick="openImageModal(\'' + url.replace(/'/g, "\\'") + '\')" onerror="this.onerror=null;this.src=this.src+\'?retry=\'+Date.now();">';
         });
         html += '</div>';
       }
@@ -1296,7 +1346,8 @@ function renderGallery(images) {
     var imgUrl = getImageUrl(img);
     html += '<div class="image-card" data-stored="' + img.stored_name + '" data-url="' + imgUrl + '">' +
       '<div class="checkbox-wrapper"><input type="checkbox" class="img-checkbox" data-stored="' + img.stored_name + '" data-url="' + imgUrl + '" id="gchk_' + i + '"></div>' +
-      '<img class="card-img" src="' + imgUrl + '" alt="' + escapeHtml(img.original_name) + '" loading="lazy" onerror="this.src=\'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22260%22 height=%22160%22><rect fill=%22%23e2e8f0%22 width=%22260%22 height=%22160%22/><text x=%2280%22 y=%2285%22 font-size=%2214%22 fill=%22%2394a3b8%22>加载失败</text></svg>\'">' +
+      '<img class="card-img" src="' + imgUrl + '" alt="' + escapeHtml(img.original_name) + '" loading="lazy" onerror="this.onerror=null;this.src=this.src+\'?retry=\'+Date.now();this.nextSibling.style.display=\'flex\';" onload="this.nextSibling.style.display=\'none\';">' +
+      '<div style="display:none;text-align:center;background:#e2e8f0;padding:10px;">加载失败</div>' +
       '<div class="card-info">' +
       '<div class="img-name" title="' + escapeHtml(img.original_name) + '">' + escapeHtml(img.original_name) + '</div>' +
       '<div class="img-meta"><span>' + escapeHtml(img.uploader) + '</span><span>' + formatSize(img.file_size) + '</span></div>' +
@@ -1505,12 +1556,13 @@ function deleteNotification(id) {
 // ==================== 用户管理面板 ====================
 function showUserPanel() {
   var users = getUsers();
-  var html = '<div style="overflow-x:auto;"><table>' +
-    '<tr><th>用户名</th><th>角色</th><th>注册时间</th></tr>';
+  var html = '<div style="overflow-x:auto;"><table> +
+    '<thead><tr><th>用户名</th><th>角色</th><th>注册时间</th></tr></thead>' +
+    '<tbody>';
   Object.keys(users).forEach(function (u) {
     html += '<tr><td>' + escapeHtml(u) + '</td><td>' + escapeHtml(users[u].role || 'user') + '</td><td>' + (users[u].created_at ? formatTime(users[u].created_at) : '-') + '</td></tr>';
   });
-  html += '</table></div>';
+  html += '</tbody></table></div>';
   $('userPanelBody').innerHTML = html;
   $('userPanelOverlay').classList.add('show');
 }
