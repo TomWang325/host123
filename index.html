@@ -4,18 +4,20 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>图床 & 反馈系统</title>
-<link rel="stylesheet" href="style.css">
+<!-- ✅ 修复 CSS 路径 -->
+<link rel="stylesheet" href="./style.css">
 </head>
 <body>
+
 <div class="container">
   <div class="header">
     <h1>图床 & 反馈系统</h1>
-    <p>基于腾讯云COS + GitHub Pages</p>
+    <p>基于腾讯云COS + GitHub Pages</p >
     <div class="user-info">
       <span id="headerUsername"></span>
       <span id="headerRole"></span>
-      <a href="javascript:void(0)" id="changePwdLink">修改密码</a>
-      <a href="javascript:void(0)" class="logout-link" id="logoutBtn">退出登录</a>
+      <a href=" " id="changePwdLink">修改密码</a >
+      <a href="javascript:void(0)" class="logout-link" id="logoutBtn">退出登录</a >
     </div>
     <div class="notification-icon" id="notificationIcon">
       🔔
@@ -24,7 +26,7 @@
   </div>
 
   <div id="cosConfigBanner" class="cos-config-banner">
-    COS未配置，点此 <a href="javascript:void(0)" id="cosSetupLink">设置</a>
+    COS未配置，点此 <a href="javascript:void(0)" id="cosSetupLink">设置</a >
   </div>
 
   <div id="navTabs" class="nav-tabs"></div>
@@ -48,7 +50,7 @@
           <button type="submit" class="auth-btn">登录</button>
         </form>
         <div class="auth-footer">
-          没有账号？<a id="toRegisterLink">立即注册</a>
+          没有账号？<a id="toRegisterLink">立即注册</a >
         </div>
       </div>
     </div>
@@ -72,7 +74,7 @@
           <button type="submit" class="auth-btn">注册</button>
         </form>
         <div class="auth-footer">
-          已有账号？<a id="toLoginLink">立即登录</a>
+          已有账号？<a id="toLoginLink">立即登录</a >
         </div>
       </div>
     </div>
@@ -148,7 +150,7 @@
   <div class="modal" id="imageModal">
     <span class="close-modal" id="closeModalBtn">&times;</span>
     <div class="modal-content">
-      <img class="modal-img" id="modalImg">
+      < img class="modal-img" id="modalImg">
     </div>
   </div>
 
@@ -213,6 +215,6 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/cos-js-sdk-v5/dist/cos-js-sdk-v5.min.js"></script>
-<script src="app.js"></script>
+<script src="./app.js"></script>
 </body>
 </html>
