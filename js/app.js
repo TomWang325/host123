@@ -315,6 +315,7 @@ async function syncFromRemote(key, expectedType) {
 }
 
 async function initData() {
+  // 1. 先从本地加载
   var localUsers = localStorage.getItem(STORAGE_KEYS.users);
   var localFbs = localStorage.getItem(STORAGE_KEYS.feedbacks);
   var localNotifs = localStorage.getItem(STORAGE_KEYS.notifications);
@@ -325,20 +326,68 @@ async function initData() {
   CACHE[STORAGE_KEYS.notifications] = localNotifs ? JSON.parse(localNotifs) : null;
   CACHE[STORAGE_KEYS.metadata] = localMeta ? JSON.parse(localMeta) : null;
 
+  // 2. 如果 COS 可用，尝试从云端同步（但绝不覆盖本地已有数据，只作为补充）
   if (getCosClient()) {
-    await syncFromRemote(STORAGE_KEYS.users, 'object');
-    await syncFromRemote(STORAGE_KEYS.feedbacks, 'array');
-    await syncFromRemote(STORAGE_KEYS.notifications, 'array');
-    await syncFromRemote(STORAGE_KEYS.metadata, 'array');
+    let remoteUsers = null, remoteFbs = null, remoteNotifs = null, remoteMeta = null;
 
-    if (!CACHE[STORAGE_KEYS.users]) {
-      CACHE[STORAGE_KEYS.users] = {
-        ziy111: { password: '', role: 'admin', created_at: new Date().toISOString(), _needs_hash: true }
-      };
+    try {
+      const usersB64 = await cosGetData(STORAGE_KEYS.users);
+      if (usersB64) {
+        const usersJson = await decryptData(usersB64);
+        if (usersJson) remoteUsers = JSON.parse(usersJson);
+      }
+      const fbsB64 = await cosGetData(STORAGE_KEYS.feedbacks);
+      if (fbsB64) {
+        const fbsJson = await decryptData(fbsB64);
+        if (fbsJson) remoteFbs = JSON.parse(fbsJson);
+      }
+      const notifsB64 = await cosGetData(STORAGE_KEYS.notifications);
+      if (notifsB64) {
+        const notifsJson = await decryptData(notifsB64);
+        if (notifsJson) remoteNotifs = JSON.parse(notifsJson);
+      }
+      const metaB64 = await cosGetData(STORAGE_KEYS.metadata);
+      if (metaB64) {
+        const metaJson = await decryptData(metaB64);
+        if (metaJson) remoteMeta = JSON.parse(metaJson);
+      }
+    } catch (e) {
+      console.warn('从 COS 同步数据失败', e);
+    }
+
+    // 合并策略：远端数据优先，但保留本地所有用户（避免覆盖新注册账号）
+    // 更安全的做法：如果本地有数据且远端也有，则保留远端数据（以确保多设备一致性）
+    // 但为了避免数据丢失，这里采用 “本地为空时采用远端，否则以本地为准并上传”
+    if (remoteUsers && (!CACHE[STORAGE_KEYS.users] || Object.keys(CACHE[STORAGE_KEYS.users]).length === 0)) {
+      CACHE[STORAGE_KEYS.users] = remoteUsers;
+      localStorage.setItem(STORAGE_KEYS.users, JSON.stringify(remoteUsers));
+    }
+    if (remoteFbs && (!CACHE[STORAGE_KEYS.feedbacks] || CACHE[STORAGE_KEYS.feedbacks].length === 0)) {
+      CACHE[STORAGE_KEYS.feedbacks] = remoteFbs;
+      localStorage.setItem(STORAGE_KEYS.feedbacks, JSON.stringify(remoteFbs));
+    }
+    if (remoteNotifs && (!CACHE[STORAGE_KEYS.notifications] || CACHE[STORAGE_KEYS.notifications].length === 0)) {
+      CACHE[STORAGE_KEYS.notifications] = remoteNotifs;
+      localStorage.setItem(STORAGE_KEYS.notifications, JSON.stringify(remoteNotifs));
+    }
+    if (remoteMeta && (!CACHE[STORAGE_KEYS.metadata] || CACHE[STORAGE_KEYS.metadata].length === 0)) {
+      CACHE[STORAGE_KEYS.metadata] = remoteMeta;
+      localStorage.setItem(STORAGE_KEYS.metadata, JSON.stringify(remoteMeta));
+    }
+
+    // 如果本地有数据而远端为空，则主动上传本地数据到 COS（避免数据孤岛）
+    if (CACHE[STORAGE_KEYS.users] && !remoteUsers) {
       await saveDataNow(STORAGE_KEYS.users, CACHE[STORAGE_KEYS.users]);
+    }
+    if (CACHE[STORAGE_KEYS.feedbacks] && !remoteFbs) {
+      await saveDataNow(STORAGE_KEYS.feedbacks, CACHE[STORAGE_KEYS.feedbacks]);
+    }
+    if (CACHE[STORAGE_KEYS.metadata] && !remoteMeta) {
+      await saveDataNow(STORAGE_KEYS.metadata, CACHE[STORAGE_KEYS.metadata]);
     }
   }
 
+  // 3. 最终确保结构完整
   if (!CACHE[STORAGE_KEYS.users]) {
     CACHE[STORAGE_KEYS.users] = {
       ziy111: { password: '', role: 'admin', created_at: new Date().toISOString(), _needs_hash: true }
