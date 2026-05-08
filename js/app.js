@@ -552,7 +552,23 @@ function ensureSignedUrl(key) {
     }
   });
 }
-
+function deleteCosFile(storedName) {
+  return new Promise((resolve, reject) => {
+    var cos = getCosClient();
+    if (!cos) {
+      reject(new Error('COS 未配置'));
+      return;
+    }
+    cos.deleteObject({
+      Bucket: COS_CONFIG.Bucket,
+      Region: COS_CONFIG.Region,
+      Key: storedName
+    }, function(err, data) {
+      if (err) reject(err);
+      else resolve(data);
+    });
+  });
+}
 function uploadToCos(file, onProgress) {
   return new Promise(function (resolve, reject) {
     if (!COS_CONFIG.enabled || !COS_CONFIG.SecretId) {
@@ -1476,14 +1492,22 @@ function renderGallery(images) {
       e.stopPropagation();
       var name = btn.getAttribute('data-stored');
       if (confirm('确定删除此图片吗？')) {
-        removeMetadata(name);
-        var imgs = getMetadata().sort(function (a, b) {
-          return (b.upload_time || '') > (a.upload_time || '') ? 1 : -1;
+        // 1. 先删除 COS 上的实际文件
+        deleteCosFile(name).then(() => {
+          // 2. 再删除元数据
+          removeMetadata(name);
+          // 3. 重新渲染
+          var imgs = getMetadata().sort(function (a, b) {
+            return (b.upload_time || '') > (a.upload_time || '') ? 1 : -1;
+          });
+          renderGallery(imgs);
+          allImagesCache = imgs;
+          renderExistingImages();
+          showToast('图片已删除');
+        }).catch(err => {
+          console.error('COS 删除失败', err);
+          showToast('删除失败：' + err.message, true);
         });
-        renderGallery(imgs);
-        allImagesCache = imgs;
-        renderExistingImages();
-        showToast('图片已删除');
       }
     });
   });
