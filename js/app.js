@@ -107,9 +107,33 @@ function showToast(msg, isError) {
   t._timeout = setTimeout(function () { t.style.opacity = '0'; }, 2500);
 }
 
-function openImageModal(url) {
-  $('modalImg').src = url;
-  $('imageModal').style.display = 'block';
+function openImageModal(imgElement) {
+  // 支持传入 DOM 元素或旧的 url 字符串（兼容性）
+  if (typeof imgElement === 'string') {
+    // 旧方式：直接传 URL
+    $('modalImg').src = imgElement;
+    $('imageModal').style.display = 'block';
+    return;
+  }
+  
+  // 新方式：传入 img 元素
+  var storedName = imgElement.getAttribute('data-stored');
+  if (storedName) {
+    // 有 data-stored，异步获取签名 URL
+    ensureSignedUrl(storedName).then(signedUrl => {
+      $('modalImg').src = signedUrl;
+      $('imageModal').style.display = 'block';
+    }).catch(err => {
+      console.error('获取签名 URL 失败', err);
+      // 降级：使用原 src
+      $('modalImg').src = imgElement.src;
+      $('imageModal').style.display = 'block';
+    });
+  } else {
+    // 没有 data-stored，直接使用原 src
+    $('modalImg').src = imgElement.src;
+    $('imageModal').style.display = 'block';
+  }
 }
 
 // ==================== 密码哈希 (SHA-256) ====================
@@ -1092,7 +1116,7 @@ function renderFeedbackList() {
         var url = meta ? getImageUrl(meta) : '';
         if (!url && (imgName.startsWith('http') || imgName.startsWith('data:'))) url = imgName;
         if (url) {
-          html += '<img class="feedback-img" data-stored="' + imgName + '" src="' + url + '" onclick="openImageModal(\'' + url.replace(/'/g, "\\'") + '\')" loading="lazy" onerror="this.onerror=null;this.src=this.src+\'?retry=\'+Date.now();">';
+          html += '<img class="feedback-img" data-stored="' + imgName + '" src="' + url + '" onclick="openImageModal(this)" loading="lazy" onerror="this.onerror=null;this.src=this.src+\'?retry=\'+Date.now();">';
         }
       });
       html += '</div>';
@@ -1131,7 +1155,7 @@ function renderFeedbackList() {
           var meta = allImagesCache.find(function (m) { return m.stored_name === imgName; });
           var url = meta ? getImageUrl(meta) : '';
           if (!url && (imgName.startsWith('http') || imgName.startsWith('data:'))) url = imgName;
-          if (url) html += '<img class="comment-img" data-stored="' + imgName + '" src="' + url + '" onclick="openImageModal(\'' + url.replace(/'/g, "\\'") + '\')" onerror="this.onerror=null;this.src=this.src+\'?retry=\'+Date.now();">';
+          if (url) html += '<img class="comment-img" data-stored="' + imgName + '" src="' + url + '" onclick="openImageModal(this)" onerror="this.onerror=null;this.src=this.src+\'?retry=\'+Date.now();">';
         });
         html += '</div>';
       }
