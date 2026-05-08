@@ -1,8 +1,4 @@
 // ==================== 腾讯云 COS 配置 ====================
-// 密钥存储在浏览器 localStorage，仓库中不含真实密钥
-// 首次使用：F12 → Console → setupCos('SecretId','SecretKey')
-// 或点登录页"配置COS"链接设置
-
 var COS_CONFIG = (function() {
   var stored = null;
   try { stored = JSON.parse(localStorage.getItem('host_cos_cfg')); } catch(e) {}
@@ -129,12 +125,9 @@ async function hashPassword(password) {
 
 // ==================== AES-GCM 加密（多设备统一盐） ====================
 var ENC_KEY = null;
-var ENC_SALT_READY = false;
 
-// 从 COS 读取或生成全局盐（存储路径：host_data/_enc_salt.txt）
 async function initEncSalt() {
   if (!getCosClient()) {
-    // 未配置 COS，使用本地随机盐（不支持多设备同步）
     let salt = localStorage.getItem('host_enc_salt');
     if (!salt) {
       let saltBytes = crypto.getRandomValues(new Uint8Array(16));
@@ -144,7 +137,6 @@ async function initEncSalt() {
     return salt;
   }
 
-  // 已配置 COS → 尝试从 COS 读取全局盐
   let cos = getCosClient();
   let remoteSalt = null;
   try {
@@ -159,18 +151,15 @@ async function initEncSalt() {
       });
     });
     remoteSalt = res.trim();
-  } catch(e) { /* 文件不存在 */ }
+  } catch(e) {}
 
   if (remoteSalt && remoteSalt.length === 32) {
-    // 使用远程盐，同时存入本地缓存
     localStorage.setItem('host_enc_salt', remoteSalt);
     return remoteSalt;
   } else {
-    // 生成本地新盐并上传到 COS
     let saltBytes = crypto.getRandomValues(new Uint8Array(16));
     let newSalt = Array.from(saltBytes).map(b => b.toString(16).padStart(2,'0')).join('');
     localStorage.setItem('host_enc_salt', newSalt);
-    // 上传到 COS（忽略失败）
     try {
       await new Promise((resolve, reject) => {
         cos.putObject({
@@ -264,7 +253,7 @@ function cosPutData(key, encryptedB64) {
   });
 }
 
-// ==================== 统一数据持久层 (COS + local缓存) ====================
+// ==================== 统一数据持久层 ====================
 var CACHE = {};
 var PENDING_SAVES = {};
 
@@ -337,8 +326,8 @@ async function initData() {
   CACHE[STORAGE_KEYS.metadata] = localMeta ? JSON.parse(localMeta) : null;
 
   if (getCosClient()) {
-    var syncedUsers = await syncFromRemote(STORAGE_KEYS.users, 'object');
-    var syncedFbs = await syncFromRemote(STORAGE_KEYS.feedbacks, 'array');
+    await syncFromRemote(STORAGE_KEYS.users, 'object');
+    await syncFromRemote(STORAGE_KEYS.feedbacks, 'array');
     await syncFromRemote(STORAGE_KEYS.notifications, 'array');
     await syncFromRemote(STORAGE_KEYS.metadata, 'array');
 
@@ -413,7 +402,7 @@ function currentRole() {
 
 // ==================== COS 上传模块 ====================
 var SIGNED_URL_CACHE = {};
-var SIGNED_URL_TTL = 6 * 24 * 60 * 60 * 1000; // 6天缓存，7天签名提前刷新
+var SIGNED_URL_TTL = 6 * 24 * 60 * 60 * 1000;
 
 function getCosRawUrl(key) {
   if (COS_CONFIG.baseUrl) return COS_CONFIG.baseUrl.replace(/\/$/, '') + '/' + key;
@@ -429,7 +418,7 @@ function generateSignedUrl(key) {
       Region: COS_CONFIG.Region,
       Key: key,
       Sign: true,
-      Expires: 86400 // 24小时
+      Expires: 86400
     }, function (err, data) {
       if (err) { resolve(getCosRawUrl(key)); }
       else { resolve(data.Url); }
@@ -579,13 +568,11 @@ function getImageUrl(item) {
   if (item.url && item.url.startsWith('data:')) return item.url;
   if (item._base64) return item.url;
   if (item.stored_name && item.stored_name.endsWith('_b64')) return item.url || '';
-  // COS图片：优先返回缓存的签名链接
   if (COS_CONFIG.enabled && item.stored_name) {
     var cached = SIGNED_URL_CACHE[item.stored_name];
     if (cached && (Date.now() - cached.time) < SIGNED_URL_TTL) return cached.url;
     return getCosUrl(item.stored_name);
   }
-  // 旧数据（遗留的完整http URL）
   if (item.url && item.url.startsWith('http')) return item.url;
   return item.url || '';
 }
@@ -765,7 +752,6 @@ function renderFeedbackSystem() {
   }
 }
 
-// ---- 抽屉 ----
 function toggleDrawer() {
   isDrawerOpen = !isDrawerOpen;
   var arrow = $('drawerArrow');
@@ -801,7 +787,6 @@ function updateSelectedHint() {
   }
 }
 
-// ---- 图片加载（用于反馈选择） ----
 function loadImagesForFeedback() {
   allImagesCache = getMetadata().sort(function (a, b) {
     return (b.upload_time || '') > (a.upload_time || '') ? 1 : -1;
@@ -819,12 +804,13 @@ function renderExistingImages() {
   allImagesCache.forEach(function (img) {
     var isSelected = selectedImages.indexOf(img.stored_name) !== -1;
     var imgUrl = getImageUrl(img);
-    var style = 'position:relative;';
-    html += '<div class="existing-image-item' + (isSelected ? ' selected' : '') + '" data-stored="' + img.stored_name + '" style="' + style + '">' +
-      '<img src="' + imgUrl + '" alt="' + escapeHtml(img.original_name) + '" loading="lazy" onerror="this.onerror=null;this.src=this.src+\'?retry=\'+Date.now();this.nextSibling.style.display=\'flex\';" onload="this.nextSibling.style.display=\'none\';">' +
-      '<div class="img-placeholder" style="display:none;width:80px;height:80px;align-items:center;justify-content:center;background:#e2e8f0;border-radius:10px;color:#94a3b8;font-size:10px;">加载失败</div>' +
-      (isSelected ? '<span class="remove-icon" style="position:absolute;top:2px;right:2px;background:rgba(0,0,0,.6);color:#fff;border-radius:50%;width:18px;height:18px;display:flex;align-items:center;justify-content:center;font-size:12px;cursor:pointer;">✕</span>' : '') +
-      '</div>';
+    html += `<div class="existing-image-item${isSelected ? ' selected' : ''}" data-stored="${img.stored_name}" style="position:relative;">
+      <img src="${imgUrl}" alt="${escapeHtml(img.original_name)}" loading="lazy" 
+        onerror="this.onerror=null;this.src=this.src+'?retry='+Date.now();this.nextSibling.style.display='flex';" 
+        onload="this.nextSibling.style.display='none';">
+      <div class="img-placeholder" style="display:none;width:80px;height:80px;align-items:center;justify-content:center;background:#e2e8f0;border-radius:10px;color:#94a3b8;font-size:10px;">加载失败</div>
+      ${isSelected ? '<span class="remove-icon" style="position:absolute;top:2px;right:2px;background:rgba(0,0,0,.6);color:#fff;border-radius:50%;width:18px;height:18px;display:flex;align-items:center;justify-content:center;font-size:12px;cursor:pointer;">✕</span>' : ''}
+    </div>`;
   });
   container.innerHTML = html;
 
@@ -844,7 +830,6 @@ function renderExistingImages() {
   });
 }
 
-// ---- 图片上传 ----
 async function uploadImageForFeedback(file) {
   if (!file) return false;
   var allowed = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp', 'image/bmp'];
@@ -868,7 +853,6 @@ async function uploadImageForFeedback(file) {
   }
 }
 
-// ---- 评论图片上传 ----
 async function uploadCommentImage(feedbackId, file) {
   try {
     var result = await uploadImage(file);
@@ -901,7 +885,6 @@ async function uploadCommentImage(feedbackId, file) {
   }
 }
 
-// ---- 反馈CRUD ----
 function loadFeedbacks() {
   allFeedbacksCache = getFeedbacks().sort(function (a, b) {
     return (b.created_at || '') > (a.created_at || '') ? 1 : -1;
@@ -995,7 +978,7 @@ function renderFeedbackList() {
         var url = meta ? getImageUrl(meta) : '';
         if (!url && (imgName.startsWith('http') || imgName.startsWith('data:'))) url = imgName;
         if (url) {
-          html += '<img class="feedback-img" src="' + url + '" onclick="openImageModal(\'' + url.replace(/'/g, "\\'") + '\')" loading="lazy" onerror="this.onerror=null;this.src=this.src+\'?retry=\'+Date.now();">';
+          html += `<img class="feedback-img" src="${url}" onclick="openImageModal('${url.replace(/'/g, "\\'")}')" loading="lazy" onerror="this.onerror=null;this.src=this.src+'?retry='+Date.now();">`;
         }
       });
       html += '</div>';
@@ -1034,7 +1017,7 @@ function renderFeedbackList() {
           var meta = allImagesCache.find(function (m) { return m.stored_name === imgName; });
           var url = meta ? getImageUrl(meta) : '';
           if (!url && (imgName.startsWith('http') || imgName.startsWith('data:'))) url = imgName;
-          if (url) html += '<img class="comment-img" src="' + url + '" onclick="openImageModal(\'' + url.replace(/'/g, "\\'") + '\')" onerror="this.onerror=null;this.src=this.src+\'?retry=\'+Date.now();">';
+          if (url) html += `<img class="comment-img" src="${url}" onclick="openImageModal('${url.replace(/'/g, "\\'")}')" onerror="this.onerror=null;this.src=this.src+'?retry='+Date.now();">`;
         });
         html += '</div>';
       }
@@ -1344,17 +1327,21 @@ function renderGallery(images) {
   images.forEach(function (img, i) {
     var canDelete = img.uploader === currentUser() || currentRole() === 'admin';
     var imgUrl = getImageUrl(img);
-    html += '<div class="image-card" data-stored="' + img.stored_name + '" data-url="' + imgUrl + '">' +
-      '<div class="checkbox-wrapper"><input type="checkbox" class="img-checkbox" data-stored="' + img.stored_name + '" data-url="' + imgUrl + '" id="gchk_' + i + '"></div>' +
-      '<img class="card-img" src="' + imgUrl + '" alt="' + escapeHtml(img.original_name) + '" loading="lazy" onerror="this.onerror=null;this.src=this.src+\'?retry=\'+Date.now();this.nextSibling.style.display=\'flex\';" onload="this.nextSibling.style.display=\'none\';">' +
-      '<div style="display:none;text-align:center;background:#e2e8f0;padding:10px;">加载失败</div>' +
-      '<div class="card-info">' +
-      '<div class="img-name" title="' + escapeHtml(img.original_name) + '">' + escapeHtml(img.original_name) + '</div>' +
-      '<div class="img-meta"><span>' + escapeHtml(img.uploader) + '</span><span>' + formatSize(img.file_size) + '</span></div>' +
-      '<div class="card-actions">' +
-      '<button class="copy-link-btn" data-stored="' + img.stored_name + '" data-url="' + imgUrl + '">复制链接</button>' +
-      (canDelete ? '<button class="delete-btn" data-stored="' + img.stored_name + '">删除</button>' : '<button class="delete-btn" disabled>无权删除</button>') +
-      '</div></div></div>';
+    html += `<div class="image-card" data-stored="${img.stored_name}" data-url="${imgUrl}">
+      <div class="checkbox-wrapper"><input type="checkbox" class="img-checkbox" data-stored="${img.stored_name}" data-url="${imgUrl}" id="gchk_${i}"></div>
+      <img class="card-img" src="${imgUrl}" alt="${escapeHtml(img.original_name)}" loading="lazy" 
+        onerror="this.onerror=null;this.src=this.src+'?retry='+Date.now();this.nextSibling.style.display='flex';" 
+        onload="this.nextSibling.style.display='none';">
+      <div style="display:none;text-align:center;background:#e2e8f0;padding:10px;">加载失败</div>
+      <div class="card-info">
+        <div class="img-name" title="${escapeHtml(img.original_name)}">${escapeHtml(img.original_name)}</div>
+        <div class="img-meta"><span>${escapeHtml(img.uploader)}</span><span>${formatSize(img.file_size)}</span></div>
+        <div class="card-actions">
+          <button class="copy-link-btn" data-stored="${img.stored_name}" data-url="${imgUrl}">复制链接</button>
+          ${canDelete ? `<button class="delete-btn" data-stored="${img.stored_name}">删除</button>` : '<button class="delete-btn" disabled>无权删除</button>'}
+        </div>
+      </div>
+    </div>`;
   });
   container.innerHTML = html;
 
@@ -1473,12 +1460,12 @@ function renderNotificationList(list) {
   }
   var html = '';
   list.forEach(function (n) {
-    html += '<div class="notification-item' + (!n.is_read ? ' unread' : '') + '" data-id="' + n.id + '">' +
-      '<button class="notification-delete" data-id="' + n.id + '">✕</button>' +
-      '<div class="notification-item-title">' + escapeHtml(n.title) + '</div>' +
-      '<div class="notification-item-content">' + escapeHtml(n.content) + '</div>' +
-      '<div class="notification-item-time">' + formatTime(n.created_at) + '</div>' +
-      '</div>';
+    html += `<div class="notification-item${!n.is_read ? ' unread' : ''}" data-id="${n.id}">
+      <button class="notification-delete" data-id="${n.id}">✕</button>
+      <div class="notification-item-title">${escapeHtml(n.title)}</div>
+      <div class="notification-item-content">${escapeHtml(n.content)}</div>
+      <div class="notification-item-time">${formatTime(n.created_at)}</div>
+    </div>`;
   });
   container.innerHTML = html;
 
@@ -1556,11 +1543,9 @@ function deleteNotification(id) {
 // ==================== 用户管理面板 ====================
 function showUserPanel() {
   var users = getUsers();
-  var html = '<div style="overflow-x:auto;"><table> +
-    '<thead><tr><th>用户名</th><th>角色</th><th>注册时间</th></tr></thead>' +
-    '<tbody>';
+  var html = '<div style="overflow-x:auto;"><table><thead><tr><th>用户名</th><th>角色</th><th>注册时间</th></tr></thead><tbody>';
   Object.keys(users).forEach(function (u) {
-    html += '<tr><td>' + escapeHtml(u) + '</td><td>' + escapeHtml(users[u].role || 'user') + '</td><td>' + (users[u].created_at ? formatTime(users[u].created_at) : '-') + '</td></tr>';
+    html += `<tr><td>${escapeHtml(u)}</td><td>${escapeHtml(users[u].role || 'user')}</td><td>${users[u].created_at ? formatTime(users[u].created_at) : '-'}</td></tr>`;
   });
   html += '</tbody></table></div>';
   $('userPanelBody').innerHTML = html;
@@ -1704,7 +1689,6 @@ function bindGlobalEvents() {
     e.preventDefault();
     navigate('gallery');
   });
-
 }
 
 // ==================== 应用初始化 ====================
