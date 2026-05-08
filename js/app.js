@@ -913,6 +913,19 @@ function renderExistingImages() {
       renderExistingImages();
     });
   });
+    // 延迟主动更新所有缩略图的签名 URL
+  setTimeout(() => {
+    allImagesCache.forEach(img => {
+      if (!img.stored_name) return;
+      ensureSignedUrl(img.stored_name).then(signedUrl => {
+        // 在抽屉容器中查找对应的图片元素
+        var targetImg = document.querySelector(`.existing-image-item[data-stored="${img.stored_name}"] img`);
+        if (targetImg && targetImg.src !== signedUrl) {
+          targetImg.src = signedUrl;
+        }
+      }).catch(err => console.warn('更新抽屉缩略图失败', img.stored_name, err));
+    });
+  }, 100);
 }
 
 async function uploadImageForFeedback(file) {
