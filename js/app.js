@@ -771,7 +771,7 @@ function renderExistingImages() {
     var imgUrl = getImageUrl(img);
     var style = 'position:relative;';
     html += '<div class="existing-image-item' + (isSelected ? ' selected' : '') + '" data-stored="' + img.stored_name + '" style="' + style + '">' +
-      '<img src="' + imgUrl + '" alt="' + escapeHtml(img.original_name) + '" loading="lazy" onerror="this.style.display=\'none\';this.nextSibling.style.display=\'flex\';">' +
+      '<img src="' + imgUrl + '" alt="' + escapeHtml(img.original_name) + '" loading="lazy" crossorigin="anonymous" onerror="this.style.display=\'none\';this.nextSibling.style.display=\'flex\';">' +
       '<div class="img-placeholder" style="display:none;width:80px;height:80px;align-items:center;justify-content:center;background:#e2e8f0;border-radius:10px;color:#94a3b8;font-size:10px;">无预览</div>' +
       (isSelected ? '<span class="remove-icon" style="position:absolute;top:2px;right:2px;background:rgba(0,0,0,.6);color:#fff;border-radius:50%;width:18px;height:18px;display:flex;align-items:center;justify-content:center;font-size:12px;cursor:pointer;">✕</span>' : '') +
       '</div>';
