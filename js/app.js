@@ -483,11 +483,48 @@ function getCosUrl(key) {
   if (getCosClient()) {
     generateSignedUrl(key).then(function (signed) {
       SIGNED_URL_CACHE[key] = { url: signed, time: Date.now() };
-      refreshAllImageUrls();
+      updateSingleImageSrc(key, signed);
     });
     return 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%"><rect fill="#e2e8f0" width="100%" height="100%"/><text x="50%" y="50%" text-anchor="middle" fill="#94a3b8" font-size="14">加载中...</text></svg>');
   }
   return getCosRawUrl(key);
+}
+function updateSingleImageSrc(storedName, signedUrl) {
+  // 1. 更新图床管理页的图片卡片
+  var cardImgs = document.querySelectorAll('.card-img');
+  for (var i = 0; i < cardImgs.length; i++) {
+    var img = cardImgs[i];
+    var parentCard = img.closest('.image-card');
+    if (parentCard && parentCard.getAttribute('data-stored') === storedName) {
+      img.src = signedUrl;
+      // 同时更新 data-url 属性（用于复制链接）
+      parentCard.setAttribute('data-url', signedUrl);
+      // 如果有复选框，也更新其 data-url
+      var checkbox = parentCard.querySelector('.img-checkbox');
+      if (checkbox) checkbox.setAttribute('data-url', signedUrl);
+      break;
+    }
+  }
+  
+  // 2. 更新反馈列表中的图片（如果有的话）
+  var feedbackImgs = document.querySelectorAll('.feedback-img, .comment-img');
+  for (var j = 0; j < feedbackImgs.length; j++) {
+    var img = feedbackImgs[j];
+    var src = img.getAttribute('src');
+    if (src && src.indexOf(storedName) !== -1) {
+      img.src = signedUrl;
+    }
+  }
+  
+  // 3. 更新“选择已有图片”抽屉中的缩略图
+  var existingImgs = document.querySelectorAll('.existing-image-item img');
+  for (var k = 0; k < existingImgs.length; k++) {
+    var img = existingImgs[k];
+    var parentItem = img.closest('.existing-image-item');
+    if (parentItem && parentItem.getAttribute('data-stored') === storedName) {
+      img.src = signedUrl;
+    }
+  }
 }
 
 function refreshAllImageUrls() {
