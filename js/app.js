@@ -806,8 +806,7 @@ function renderExistingImages() {
     var imgUrl = getImageUrl(img);
     html += `<div class="existing-image-item${isSelected ? ' selected' : ''}" data-stored="${img.stored_name}" style="position:relative;">
       <img src="${imgUrl}" alt="${escapeHtml(img.original_name)}" loading="lazy" 
-        onerror="this.onerror=null;this.src=this.src+'?retry='+Date.now();this.nextSibling.style.display='flex';" 
-        onload="this.nextSibling.style.display='none';">
+        onerror="this.onerror=null;this.src=this.src+'?retry='+Date.now();this.parentNode.querySelector('.img-placeholder').style.display='flex';">
       <div class="img-placeholder" style="display:none;width:80px;height:80px;align-items:center;justify-content:center;background:#e2e8f0;border-radius:10px;color:#94a3b8;font-size:10px;">加载失败</div>
       ${isSelected ? '<span class="remove-icon" style="position:absolute;top:2px;right:2px;background:rgba(0,0,0,.6);color:#fff;border-radius:50%;width:18px;height:18px;display:flex;align-items:center;justify-content:center;font-size:12px;cursor:pointer;">✕</span>' : ''}
     </div>`;
@@ -1330,9 +1329,8 @@ function renderGallery(images) {
     html += `<div class="image-card" data-stored="${img.stored_name}" data-url="${imgUrl}">
       <div class="checkbox-wrapper"><input type="checkbox" class="img-checkbox" data-stored="${img.stored_name}" data-url="${imgUrl}" id="gchk_${i}"></div>
       <img class="card-img" src="${imgUrl}" alt="${escapeHtml(img.original_name)}" loading="lazy" 
-        onerror="this.onerror=null;this.src=this.src+'?retry='+Date.now();this.nextSibling.style.display='flex';" 
-        onload="this.nextSibling.style.display='none';">
-      <div style="display:none;text-align:center;background:#e2e8f0;padding:10px;">加载失败</div>
+        onerror="this.onerror=null;this.src=this.src+'?retry='+Date.now();this.parentNode.querySelector('.card-img-placeholder').style.display='flex';">
+      <div class="card-img-placeholder" style="display:none;text-align:center;background:#e2e8f0;padding:10px;">加载失败</div>
       <div class="card-info">
         <div class="img-name" title="${escapeHtml(img.original_name)}">${escapeHtml(img.original_name)}</div>
         <div class="img-meta"><span>${escapeHtml(img.uploader)}</span><span>${formatSize(img.file_size)}</span></div>
