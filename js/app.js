@@ -1217,6 +1217,7 @@ function bindFeedbackEvents() {
 
   document.addEventListener('click', function (e) {
     if (e.target.classList.contains('assign-option')) {
+       e.stopPropagation();
       var userId = e.target.getAttribute('data-user');
       var fbId = e.target.getAttribute('data-fb');
       assignFeedback(fbId, userId);
@@ -1355,6 +1356,8 @@ function deleteComment(fbId, cmId) {
 }
 
 function assignFeedback(fbId, assignedTo) {
+  if (window._assigningNow) return;
+  window._assigningNow = true;
   var feedbacks = getFeedbacks();
   var idx = feedbacks.findIndex(function (fb) { return fb.id === fbId; });
   if (idx === -1) return;
@@ -1386,6 +1389,7 @@ function assignFeedback(fbId, assignedTo) {
   });
 
   saveFeedbacks(feedbacks);
+  window._assigningNow = false;
 
   var preview = source.content.substring(0, 50);
   addNotification(assignedTo, '问题下发通知',
