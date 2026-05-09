@@ -2036,6 +2036,7 @@ function bindGlobalEvents() {
         try {
           var result = await uploadToCosGeneric(file);
           addDocument(result.stored_name, result.original_name, result.file_size, currentUser());
+          await saveDataNow(STORAGE_KEYS.documents, getDocuments());
           renderDocsPage();
           showToast('文档上传成功');
         } catch (err) {
