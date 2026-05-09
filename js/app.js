@@ -376,12 +376,14 @@ async function initData() {
   var localFbs = localStorage.getItem(STORAGE_KEYS.feedbacks);
   var localNotifs = localStorage.getItem(STORAGE_KEYS.notifications);
   var localMeta = localStorage.getItem(STORAGE_KEYS.metadata);
-
+  var localDocs = localStorage.getItem(STORAGE_KEYS.documents);
+  
   CACHE[STORAGE_KEYS.users] = localUsers ? JSON.parse(localUsers) : null;
   CACHE[STORAGE_KEYS.feedbacks] = localFbs ? JSON.parse(localFbs) : null;
   CACHE[STORAGE_KEYS.notifications] = localNotifs ? JSON.parse(localNotifs) : null;
   CACHE[STORAGE_KEYS.metadata] = localMeta ? JSON.parse(localMeta) : null;
-
+  CACHE[STORAGE_KEYS.documents] = localDocs ? JSON.parse(localDocs) : null;
+  
   // 2. 如果 COS 可用，强制从 COS 拉取数据并覆盖本地（确保多设备同步）
   if (getCosClient()) {
     // 辅助函数：从 COS 加载并覆盖指定键
@@ -404,6 +406,7 @@ async function initData() {
     await loadAndOverwrite(STORAGE_KEYS.feedbacks, true);
     await loadAndOverwrite(STORAGE_KEYS.notifications, true);
     await loadAndOverwrite(STORAGE_KEYS.metadata, true);
+    await syncFromRemote(STORAGE_KEYS.documents, 'array');
   }
 
   // 3. 确保默认数据结构存在（仅当 COS 也空时）
@@ -416,7 +419,7 @@ async function initData() {
   if (!CACHE[STORAGE_KEYS.notifications]) CACHE[STORAGE_KEYS.notifications] = [];
   if (!CACHE[STORAGE_KEYS.metadata]) CACHE[STORAGE_KEYS.metadata] = [];
   if (!CACHE[STORAGE_KEYS.documents]) CACHE[STORAGE_KEYS.documents] = [];
-
+  
   // 4. 保存到 localStorage（确保一致性）
   saveDataLocal(STORAGE_KEYS.users, CACHE[STORAGE_KEYS.users]);
   saveDataLocal(STORAGE_KEYS.feedbacks, CACHE[STORAGE_KEYS.feedbacks]);
