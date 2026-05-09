@@ -2179,19 +2179,25 @@ function deleteNotification(id) {
 }
 
 // ==================== 用户管理面板 ====================
-function showUserPanel() {
-  var users = getUsers();
-  var html = '<div style="overflow-x:auto;">';
-  html += '<table style="width:100%; border-collapse:collapse;">';
+async function showUserPanel() {
+  // 1. 强制从 COS 同步最新用户数据（覆盖本地缓存）
+  if (getCosClient()) {
+    await syncFromRemote(STORAGE_KEYS.users, 'object');
+  }
+  
+  // 2. 获取最新用户列表
+  const users = getUsers();
+  
+  // 3. 生成表格 HTML（与原逻辑相同，但确保 users 是最新的）
+  let html = '<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse;">';
   html += '<thead><tr><th>用户名</th><th>角色</th><th>注册时间</th><th>操作</th></tr></thead><tbody>';
-  Object.keys(users).forEach(function (username) {
-    var user = users[username];
+  Object.keys(users).forEach(username => {
+    const user = users[username];
     html += '<tr>';
     html += '<td>' + escapeHtml(username) + '</td>';
     html += '<td>' + escapeHtml(user.role || 'user') + '</td>';
     html += '<td>' + (user.created_at ? formatTime(user.created_at) : '-') + '</td>';
     html += '<td>';
-    // 不能删除自己（当前登录的管理员）
     if (username !== currentUser()) {
       html += '<button class="admin-change-pwd-btn" data-username="' + escapeHtml(username) + '" style="margin-right:8px;">修改密码</button>';
       html += '<button class="admin-delete-user-btn" data-username="' + escapeHtml(username) + '">删除用户</button>';
@@ -2202,15 +2208,18 @@ function showUserPanel() {
     html += '</tr>';
   });
   html += '</tbody></table></div>';
-  $('userPanelBody').innerHTML = html;
-  $('userPanelOverlay').classList.add('show');
-
-  // 绑定按钮事件（使用事件委托，因为表格是动态生成的）
-  var panelBody = $('userPanelBody');
-  panelBody.querySelectorAll('.admin-change-pwd-btn').forEach(btn => {
+  
+  const panelBody = document.getElementById('userPanelBody');
+  if (panelBody) panelBody.innerHTML = html;
+  document.getElementById('userPanelOverlay').classList.add('show');
+  
+  // 绑定操作按钮事件（如果原来有绑定，需要重新绑定）
+  document.querySelectorAll('.admin-change-pwd-btn').forEach(btn => {
+    btn.removeEventListener('click', changeHandler);
     btn.addEventListener('click', () => changeUserPassword(btn.getAttribute('data-username')));
   });
-  panelBody.querySelectorAll('.admin-delete-user-btn').forEach(btn => {
+  document.querySelectorAll('.admin-delete-user-btn').forEach(btn => {
+    btn.removeEventListener('click', deleteHandler);
     btn.addEventListener('click', () => deleteUser(btn.getAttribute('data-username')));
   });
 }
