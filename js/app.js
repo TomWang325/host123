@@ -761,10 +761,16 @@ function deleteCosFile(storedName) {
     });
   });
 }
-function renderDocsPage() {
+async function renderDocsPage() {
   setupNavTabs();
   if ($('headerUsername3')) $('headerUsername3').textContent = currentUser();
   if ($('headerRole3')) $('headerRole3').textContent = currentRole();
+  
+  // 强制从 COS 同步最新文档元数据（确保本地与云端一致）
+  if (getCosClient()) {
+    await syncFromRemote(STORAGE_KEYS.documents, 'array');
+  }
+  
   var docs = getDocuments().sort((a,b) => (b.upload_time || '') > (a.upload_time || '') ? 1 : -1);
   renderDocList(docs);
 }
@@ -808,9 +814,9 @@ function renderDocList(docs) {
       if (confirm('确定删除此文档吗？')) {
         var stored = btn.getAttribute('data-stored');
         try {
-          await deleteCosFile(stored);
-          removeDocument(stored);
-          renderDocsPage();
+          await deleteCosFile(stored);   // 调用 COS 删除接口
+          removeDocument(stored);         // 删除本地元数据
+          renderDocsPage();               // 重新渲染
           showToast('文档已删除');
         } catch (err) {
           showToast('删除失败：' + err.message, true);
