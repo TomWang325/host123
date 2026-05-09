@@ -809,7 +809,9 @@ function renderDocList(docs) {
     </div>`;
   });
   container.innerHTML = html;
-
+  DocIntegration.bindFeedbackDocEvents(container);
+  DocIntegration.bindCommentDocEvents(container);
+  
   container.querySelectorAll('.download-doc-btn').forEach(btn => {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
@@ -1322,19 +1324,32 @@ function renderFeedbackList() {
         });
         html += '</div>';
       }
+      if (c.docs && c.docs.length) {
+        html += '<div class="comment-docs" style="margin-top:8px;">';
+        c.docs.forEach(docStored => {
+          const docMeta = getDocuments().find(d => d.stored_name === docStored);
+          if (docMeta) {
+            html += `<div class="doc-link" style="display:inline-block; margin-right:12px;">📄 <a href="#" class="download-comment-doc" data-stored="${docStored}" data-name="${escapeHtml(docMeta.original_name)}">${escapeHtml(docMeta.original_name)}</a></div>`;
+          }
+        });
+        html += '</div>';
+      }
       if ((c.author === currentUser() || isAdmin) && !c.is_system) {
         html += '<button class="comment-delete" data-fb="' + fb.id + '" data-cm="' + c.id + '">删除</button>';
       }
       html += '</div>';
     });
-
+    
     html += '<div class="add-comment-area">';
     html += '<input class="comment-input" id="comment-input-' + fb.id + '" placeholder="输入评论...">';
     html += '<button class="comment-upload-img" data-fb="' + fb.id + '">图片</button>';
+    html += '<button class="comment-upload-doc" data-fb="' + fb.id + '">📎 文档</button>';
     html += '<input type="file" id="comment-file-' + fb.id + '" accept="image/*" style="display:none;">';
+    html += '<input type="file" id="comment-doc-file-' + fb.id + '" accept=".doc,.docx,.pdf,.xls,.xlsx,.ppt,.pptx,.txt" style="display:none;">';
     html += '<button class="comment-submit" data-fb="' + fb.id + '">发送</button>';
     html += '</div>';
     html += '<div class="comment-images-preview" id="comment-preview-' + fb.id + '"></div>';
+    html += '<div class="comment-docs-preview" id="comment-docs-preview-' + fb.id + '"></div>';
     html += '</div>';
 
     html += '</div>';
@@ -1357,6 +1372,31 @@ function renderFeedbackList() {
       }).catch(err => console.warn('更新反馈图片失败', storedName, err));
     });
   }, 150);
+  
+  // 绑定评论文档上传按钮
+  container.querySelectorAll('.comment-upload-doc').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const fbId = btn.getAttribute('data-fb');
+      const fileInput = document.getElementById(`comment-doc-file-${fbId}`);
+      if (fileInput) fileInput.click();
+    });
+  });
+  // 绑定文档文件选择 change 事件
+  container.querySelectorAll('input[type=file][id^="comment-doc-file-"]').forEach(input => {
+    input.addEventListener('change', async function() {
+      const fbId = this.id.replace('comment-doc-file-', '');
+      if (this.files && this.files[0]) {
+        await DocIntegration.addCommentDoc(fbId, this.files[0]);
+        DocIntegration.renderCommentDocPreview(fbId);
+        this.value = '';
+      }
+    });
+  });
+  // 初始化每个评论的文档预览区（显示已选文档）
+  container.querySelectorAll('.feedback-item').forEach(item => {
+    const fbId = item.getAttribute('data-id');
+    DocIntegration.renderCommentDocPreview(fbId);
+  });
 }
 
 function bindFeedbackEvents() {
@@ -1433,8 +1473,9 @@ function bindFeedbackEvents() {
       var input = $('comment-input-' + fbId);
       var content = (input ? input.value : '').trim();
       var images = commentPendingImages[fbId] || [];
+      const docs = DocIntegration.getCommentPendingDocs(fbId);
       if (!content && !images.length) { showToast('请输入评论内容', true); return; }
-      addComment(fbId, content, images);
+      addComment(fbId, content, images,docs);
     });
   });
 
@@ -1524,11 +1565,13 @@ function addComment(feedbackId, content, images) {
     author: currentUser(),
     content: content,
     images: images || [],
+    docs: docs || [],
     created_at: new Date().toISOString()
   };
   feedbacks[idx].comments.push(cm);
   saveFeedbacks(feedbacks);
   delete commentPendingImages[feedbackId];
+  DocIntegration.clearCommentPendingDocs(feedbackId);
 
   var fbAuthor = feedbacks[idx].author;
   if (fbAuthor !== currentUser()) {
