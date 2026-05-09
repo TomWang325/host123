@@ -130,6 +130,27 @@
           <span id="uploadProgress" style="font-size:.75rem;color:#3b82f6;"></span>
         </div>
       </div>
+      <!-- 文档引用区域（与图片选择类似） -->
+      <div class="doc-select-area" style="margin-top: 16px; padding-top: 16px; border-top: 1px dashed #cfdfed;">
+        <div class="drawer-header" id="docDrawerHeader">
+          <div class="drawer-header-left">
+            <span class="drawer-arrow" id="docDrawerArrow">▶</span>
+            <span class="image-select-label">引用文档（可选，点击选择已有文档）</span>
+          </div>
+          <span id="selectedDocHint" class="selected-hint"></span>
+        </div>
+        <div class="drawer-content" id="docDrawerContent">
+          <div id="existingDocsList" class="existing-images">
+            <div class="loading-text">加载文档中...</div>
+          </div>
+          <div class="upload-new-area" style="margin-top: 12px;">
+            <span>或者上传新文档：</span>
+            <button type="button" class="upload-new-btn" id="uploadForFeedbackDocBtn">上传文档到文档库</button>
+            <input type="file" id="feedbackDocFileInput" accept=".doc,.docx,.pdf,.xls,.xlsx,.ppt,.pptx,.txt" style="display:none">
+            <span id="docUploadProgress" style="font-size:.75rem;color:#3b82f6;"></span>
+          </div>
+        </div>
+      </div>
       <button id="submitFeedbackBtn" class="submit-feedback-btn">提交反馈</button>
     </div>
 
