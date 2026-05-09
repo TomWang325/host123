@@ -1878,13 +1878,38 @@ function deleteNotification(id) {
 // ==================== 用户管理面板 ====================
 function showUserPanel() {
   var users = getUsers();
-  var html = '<div style="overflow-x:auto;"><table><thead><tr><th>用户名</th><th>角色</th><th>注册时间</th></tr></thead><tbody>';
-  Object.keys(users).forEach(function (u) {
-    html += `<tr><td>${escapeHtml(u)}</td><td>${escapeHtml(users[u].role || 'user')}</td><td>${users[u].created_at ? formatTime(users[u].created_at) : '-'}</td></tr>`;
+  var html = '<div style="overflow-x:auto;">';
+  html += '<table style="width:100%; border-collapse:collapse;">';
+  html += '<thead><tr><th>用户名</th><th>角色</th><th>注册时间</th><th>操作</th></tr></thead><tbody>';
+  Object.keys(users).forEach(function (username) {
+    var user = users[username];
+    html += '<tr>';
+    html += '<td>' + escapeHtml(username) + '</td>';
+    html += '<td>' + escapeHtml(user.role || 'user') + '</td>';
+    html += '<td>' + (user.created_at ? formatTime(user.created_at) : '-') + '</td>';
+    html += '<td>';
+    // 不能删除自己（当前登录的管理员）
+    if (username !== currentUser()) {
+      html += '<button class="admin-change-pwd-btn" data-username="' + escapeHtml(username) + '" style="margin-right:8px;">修改密码</button>';
+      html += '<button class="admin-delete-user-btn" data-username="' + escapeHtml(username) + '">删除用户</button>';
+    } else {
+      html += '<span style="color:#94a3b8;">（当前用户）</span>';
+    }
+    html += '</td>';
+    html += '</tr>';
   });
   html += '</tbody></table></div>';
   $('userPanelBody').innerHTML = html;
   $('userPanelOverlay').classList.add('show');
+
+  // 绑定按钮事件（使用事件委托，因为表格是动态生成的）
+  var panelBody = $('userPanelBody');
+  panelBody.querySelectorAll('.admin-change-pwd-btn').forEach(btn => {
+    btn.addEventListener('click', () => changeUserPassword(btn.getAttribute('data-username')));
+  });
+  panelBody.querySelectorAll('.admin-delete-user-btn').forEach(btn => {
+    btn.addEventListener('click', () => deleteUser(btn.getAttribute('data-username')));
+  });
 }
 
 function hideUserPanel() {
