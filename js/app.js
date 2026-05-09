@@ -1911,7 +1911,57 @@ function showUserPanel() {
     btn.addEventListener('click', () => deleteUser(btn.getAttribute('data-username')));
   });
 }
-
+async function verifyAdminPassword() {
+  var password = prompt('请输入您的管理员密码以继续操作：');
+  if (!password) return false;
+  var currentAdmin = currentUser();
+  var users = getUsers();
+  var adminHash = users[currentAdmin]?.password;
+  if (!adminHash) return false;
+  var inputHash = await hashPassword(password);
+  return inputHash === adminHash;
+}
+async function changeUserPassword(targetUsername) {
+  // 验证管理员密码
+  if (!(await verifyAdminPassword())) {
+    showToast('管理员密码错误，操作已取消', true);
+    return;
+  }
+  var newPassword = prompt('请输入用户 ' + targetUsername + ' 的新密码：');
+  if (!newPassword) return;
+  if (newPassword.length < 3) {
+    showToast('密码长度至少3个字符', true);
+    return;
+  }
+  var users = getUsers();
+  if (!users[targetUsername]) {
+    showToast('用户不存在', true);
+    return;
+  }
+  users[targetUsername].password = await hashPassword(newPassword);
+  saveUsers(users);
+  showToast('用户 ' + targetUsername + ' 密码已修改');
+  // 刷新用户面板显示
+  showUserPanel();
+}
+async function deleteUser(targetUsername) {
+  // 验证管理员密码
+  if (!(await verifyAdminPassword())) {
+    showToast('管理员密码错误，操作已取消', true);
+    return;
+  }
+  if (!confirm('确定要永久删除用户 ' + targetUsername + ' 吗？此操作不可撤销。')) return;
+  var users = getUsers();
+  delete users[targetUsername];
+  saveUsers(users);
+  showToast('用户 ' + targetUsername + ' 已删除');
+  // 刷新用户面板
+  showUserPanel();
+  // 如果删除的是当前登录用户（理论上不会，因为已禁用删除自己），但出于安全，可触发登出
+  if (targetUsername === currentUser()) {
+    handleLogout();
+  }
+}
 function hideUserPanel() {
   $('userPanelOverlay').classList.remove('show');
 }
