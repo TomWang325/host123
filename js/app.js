@@ -1620,7 +1620,254 @@ function initStatusFilter() {
 
 
 // =============反馈与评论区文档上传/引用模块============
+/**
+ * 该模块为反馈表单和评论区提供文档引用功能：
+ * - 从已有文档库中选择文档（多选）
+ * - 上传新文档并自动添加到当前引用列表
+ * - 在反馈详情和评论中显示文档下载链接
+ * - 完全独立封装，不污染全局命名空间
+ */
+const DocIntegration = (function() {
+  // ---------- 私有状态 ----------
+  let selectedFeedbackDocs = [];      // 反馈表单当前选中的文档 stored_name 数组
+  let commentPendingDocs = {};        // 每条评论的待引用文档 { feedbackId: [stored_name] }
+  let allDocsCache = [];              // 文档列表缓存
+  let isDocDrawerOpen = false;        // 反馈表单文档抽屉开关状态
 
+  // ---------- DOM 元素缓存（延迟获取）----------
+  let docDrawerHeader = null,
+      docDrawerArrow = null,
+      docDrawerContent = null,
+      existingDocsList = null,
+      selectedDocHint = null,
+      docUploadProgress = null,
+      uploadDocBtn = null,
+      docFileInput = null;
+
+  // ---------- 辅助函数 ----------
+  // 从服务器（COS/本地）加载文档列表
+  async function loadDocs() {
+    allDocsCache = getDocuments().sort((a, b) => (b.upload_time || '') > (a.upload_time || '') ? 1 : -1);
+    renderDocList();
+  }
+
+  // 渲染反馈表单中的文档选择列表
+  function renderDocList() {
+    if (!existingDocsList) return;
+    if (!allDocsCache.length) {
+      existingDocsList.innerHTML = '<div style="color:#94a3b8;padding:20px;text-align:center;">暂无文档，请先上传文档</div>';
+      return;
+    }
+    let html = '';
+    allDocsCache.forEach(doc => {
+      const isSelected = selectedFeedbackDocs.includes(doc.stored_name);
+      html += `<div class="existing-image-item ${isSelected ? 'selected' : ''}" data-stored="${doc.stored_name}" style="position:relative; width:100px;">
+        <div style="width:80px;height:80px;display:flex;align-items:center;justify-content:center;background:#f8fafc;border-radius:10px;margin:0 auto;">📄</div>
+        <div style="font-size:10px;text-align:center;word-break:break-all;">${escapeHtml(doc.original_name.substring(0,15))}</div>
+        ${isSelected ? '<span class="remove-icon" style="position:absolute;top:2px;right:2px;background:rgba(0,0,0,.6);color:#fff;border-radius:50%;width:18px;height:18px;display:flex;align-items:center;justify-content:center;font-size:12px;cursor:pointer;">✕</span>' : ''}
+      </div>`;
+    });
+    existingDocsList.innerHTML = html;
+
+    // 绑定选择/取消事件
+    existingDocsList.querySelectorAll('.existing-image-item').forEach(item => {
+      item.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const stored = item.getAttribute('data-stored');
+        const idx = selectedFeedbackDocs.indexOf(stored);
+        if (idx !== -1) selectedFeedbackDocs.splice(idx, 1);
+        else selectedFeedbackDocs.push(stored);
+        updateSelectedHint();
+        renderDocList(); // 重新刷新样式
+      });
+    });
+  }
+
+  // 更新反馈表单已选文档提示
+  function updateSelectedHint() {
+    if (selectedDocHint) {
+      selectedDocHint.textContent = selectedFeedbackDocs.length ? `已选 ${selectedFeedbackDocs.length} 个文档` : '';
+    }
+  }
+
+  // 切换反馈表单的文档抽屉
+  function toggleDrawer() {
+    isDocDrawerOpen = !isDocDrawerOpen;
+    if (docDrawerArrow) docDrawerArrow.classList.toggle('open', isDocDrawerOpen);
+    if (docDrawerContent) docDrawerContent.classList.toggle('open', isDocDrawerOpen);
+    if (isDocDrawerOpen) loadDocs();
+  }
+
+  // 上传文档并添加到指定的目标（反馈或评论）
+  // target: 'feedback' 或 'comment'
+  // feedbackId: 仅当 target === 'comment' 时需要
+  async function uploadDoc(file, target, feedbackId = null) {
+    if (!file) return false;
+    const allowedExts = ['.doc','.docx','.pdf','.xls','.xlsx','.ppt','.pptx','.txt'];
+    const ext = '.' + file.name.split('.').pop().toLowerCase();
+    if (!allowedExts.includes(ext)) {
+      showToast('不支持该文档格式', true);
+      return false;
+    }
+    if (docUploadProgress) docUploadProgress.textContent = '上传中...';
+    try {
+      const result = await uploadToCosGeneric(file);
+      addDocument(result.stored_name, result.original_name, result.file_size, currentUser());
+      await saveDataNow(STORAGE_KEYS.documents, getDocuments()); // 立即同步到COS
+      if (docUploadProgress) docUploadProgress.textContent = '';
+      showToast('文档已上传: ' + result.original_name);
+      // 刷新文档列表
+      await loadDocs();
+
+      if (target === 'feedback') {
+        if (!selectedFeedbackDocs.includes(result.stored_name)) {
+          selectedFeedbackDocs.push(result.stored_name);
+          updateSelectedHint();
+          renderDocList();
+        }
+        if (!isDocDrawerOpen) toggleDrawer();
+      } else if (target === 'comment' && feedbackId) {
+        if (!commentPendingDocs[feedbackId]) commentPendingDocs[feedbackId] = [];
+        commentPendingDocs[feedbackId].push(result.stored_name);
+        updateCommentPreview(feedbackId);
+      }
+      return true;
+    } catch (err) {
+      if (docUploadProgress) docUploadProgress.textContent = '';
+      showToast('上传失败: ' + (err.message || err), true);
+      return false;
+    }
+  }
+
+  // 更新某条评论的文档预览区
+  function updateCommentPreview(fbId) {
+    const previewDiv = document.getElementById(`comment-docs-preview-${fbId}`);
+    if (!previewDiv) return;
+    const docs = commentPendingDocs[fbId] || [];
+    let html = '';
+    docs.forEach(stored => {
+      const docMeta = getDocuments().find(d => d.stored_name === stored);
+      const name = docMeta ? escapeHtml(docMeta.original_name) : stored;
+      html += `<div class="preview-doc-wrapper" data-stored="${stored}" style="display:inline-block; background:#eef2ff; border-radius:20px; padding:4px 12px; margin-right:8px; margin-bottom:4px;">
+        📄 ${name}
+        <span class="remove-doc" style="cursor:pointer; margin-left:6px;">✕</span>
+      </div>`;
+    });
+    previewDiv.innerHTML = html;
+    previewDiv.querySelectorAll('.remove-doc').forEach(span => {
+      span.addEventListener('click', (e) => {
+        const wrapper = span.closest('.preview-doc-wrapper');
+        const stored = wrapper.getAttribute('data-stored');
+        commentPendingDocs[fbId] = commentPendingDocs[fbId].filter(s => s !== stored);
+        updateCommentPreview(fbId);
+      });
+    });
+  }
+
+  // ---------- 公开 API ----------
+  return {
+    // 初始化反馈表单的文档选择区域（必须在DOM加载后调用）
+    initFeedbackDocSelector: function() {
+      docDrawerHeader = document.getElementById('docDrawerHeader');
+      docDrawerArrow = document.getElementById('docDrawerArrow');
+      docDrawerContent = document.getElementById('docDrawerContent');
+      existingDocsList = document.getElementById('existingDocsList');
+      selectedDocHint = document.getElementById('selectedDocHint');
+      docUploadProgress = document.getElementById('docUploadProgress');
+      uploadDocBtn = document.getElementById('uploadForFeedbackDocBtn');
+      docFileInput = document.getElementById('feedbackDocFileInput');
+
+      if (docDrawerHeader) docDrawerHeader.addEventListener('click', toggleDrawer);
+      if (uploadDocBtn && docFileInput) {
+        uploadDocBtn.addEventListener('click', () => docFileInput.click());
+        docFileInput.addEventListener('change', async function() {
+          if (this.files && this.files[0]) {
+            await uploadDoc(this.files[0], 'feedback');
+            this.value = '';
+          }
+        });
+      }
+      // 预加载文档列表（可选）
+      loadDocs();
+    },
+
+    // 获取反馈表单当前选中的文档（提交反馈时调用）
+    getSelectedFeedbackDocs: () => [...selectedFeedbackDocs],
+
+    // 清空反馈表单的文档选择（提交成功后调用）
+    clearFeedbackSelection: () => {
+      selectedFeedbackDocs = [];
+      updateSelectedHint();
+      renderDocList();
+    },
+
+    // 为某条评论上传文档并添加（供评论区文件上传按钮使用）
+    addCommentDoc: async (feedbackId, file) => {
+      return await uploadDoc(file, 'comment', feedbackId);
+    },
+
+    // 获取某条评论当前待引用的文档列表
+    getCommentPendingDocs: (feedbackId) => commentPendingDocs[feedbackId] || [],
+
+    // 清空某条评论的待引用文档（评论提交后调用）
+    clearCommentPendingDocs: (feedbackId) => {
+      delete commentPendingDocs[feedbackId];
+      updateCommentPreview(feedbackId);
+    },
+
+    // 渲染评论区的文档预览（在生成评论区HTML后调用，用于显示已选文档）
+    renderCommentDocPreview: (feedbackId) => updateCommentPreview(feedbackId),
+
+    // 渲染反馈详情中的文档下载链接（接收 stored_name 数组，返回 HTML 字符串）
+    renderFeedbackDocLinks: (docStoredNames) => {
+      if (!docStoredNames || !docStoredNames.length) return '';
+      let html = '<div class="feedback-docs" style="margin-bottom:12px;">';
+      docStoredNames.forEach(stored => {
+        const docMeta = getDocuments().find(d => d.stored_name === stored);
+        if (docMeta) {
+          html += `<div class="doc-link" style="display:inline-block; margin-right:12px;">📄 <a href="#" class="download-feedback-doc" data-stored="${stored}" data-name="${escapeHtml(docMeta.original_name)}">${escapeHtml(docMeta.original_name)}</a></div>`;
+        } else {
+          html += `<div class="doc-link" style="display:inline-block; margin-right:12px;">📄 未知文档</div>`;
+        }
+      });
+      html += '</div>';
+      return html;
+    },
+
+    // 绑定反馈文档的下载点击事件（在每次渲染反馈列表后调用）
+    bindFeedbackDocEvents: (container = document) => {
+      container.querySelectorAll('.download-feedback-doc').forEach(link => {
+        link.removeEventListener('click', window._docFeedbackHandler);
+        const handler = async (e) => {
+          e.preventDefault();
+          const stored = e.currentTarget.getAttribute('data-stored');
+          const name = e.currentTarget.getAttribute('data-name');
+          const url = await ensureSignedUrl(stored);
+          downloadFile(url, name);
+        };
+        link.addEventListener('click', handler);
+        // 保存以便将来移除（可选）
+        link._docFeedbackHandler = handler;
+      });
+    },
+
+    // 绑定评论文档的下载点击事件
+    bindCommentDocEvents: (container = document) => {
+      container.querySelectorAll('.download-comment-doc').forEach(link => {
+        link.removeEventListener('click', window._docCommentHandler);
+        const handler = async (e) => {
+          e.preventDefault();
+          const stored = e.currentTarget.getAttribute('data-stored');
+          const name = e.currentTarget.getAttribute('data-name');
+          const url = await ensureSignedUrl(stored);
+          downloadFile(url, name);
+        };
+        link.addEventListener('click', handler);
+        link._docCommentHandler = handler;
+      });
+    }
+  };
+})();
 
 
 
