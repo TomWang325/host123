@@ -763,8 +763,8 @@ function deleteCosFile(storedName) {
 }
 function renderDocsPage() {
   setupNavTabs();
-  if ($('headerUsername')) $('headerUsername').textContent = currentUser();
-  if ($('headerRole')) $('headerRole').textContent = currentRole();
+  if ($('headerUsername3')) $('headerUsername3').textContent = currentUser();
+  if ($('headerRole3')) $('headerRole3').textContent = currentRole();
   var docs = getDocuments().sort((a,b) => (b.upload_time || '') > (a.upload_time || '') ? 1 : -1);
   renderDocList(docs);
 }
