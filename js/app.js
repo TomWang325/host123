@@ -71,13 +71,16 @@ const STORAGE_KEYS = {
   users: 'host_users',
   feedbacks: 'host_feedbacks',
   notifications: 'host_notifications',
-  metadata: 'host_metadata'
+  metadata: 'host_metadata',
+  documents: 'host_documents'
 };
 
 // ==================== 工具函数 ====================
 function $(id) { return document.getElementById(id); }
 function qs(sel) { return document.querySelector(sel); }
 function qsa(sel) { return document.querySelectorAll(sel); }
+function getDocuments() { return loadData(STORAGE_KEYS.documents) || []; }
+function saveDocuments(list) { saveData(STORAGE_KEYS.documents, list); }
 
 function genShortId() {
   return Math.random().toString(36).substring(2, 10) + Date.now().toString(36);
@@ -134,6 +137,22 @@ function openImageModal(imgElement) {
     $('modalImg').src = imgElement.src;
     $('imageModal').style.display = 'block';
   }
+}
+function addDocument(storedName, originalName, fileSize, uploader) {
+  var docs = getDocuments();
+  docs.push({
+    stored_name: storedName,
+    original_name: originalName,
+    upload_time: new Date().toISOString(),
+    file_size: fileSize,
+    uploader: uploader
+  });
+  saveDocuments(docs);
+}
+
+function removeDocument(storedName) {
+  var docs = getDocuments().filter(d => d.stored_name !== storedName);
+  saveDocuments(docs);
 }
 
 // ==================== 密码哈希 (SHA-256) ====================
@@ -396,12 +415,14 @@ async function initData() {
   if (!CACHE[STORAGE_KEYS.feedbacks]) CACHE[STORAGE_KEYS.feedbacks] = [];
   if (!CACHE[STORAGE_KEYS.notifications]) CACHE[STORAGE_KEYS.notifications] = [];
   if (!CACHE[STORAGE_KEYS.metadata]) CACHE[STORAGE_KEYS.metadata] = [];
+  if (!CACHE[STORAGE_KEYS.documents]) CACHE[STORAGE_KEYS.documents] = [];
 
   // 4. 保存到 localStorage（确保一致性）
   saveDataLocal(STORAGE_KEYS.users, CACHE[STORAGE_KEYS.users]);
   saveDataLocal(STORAGE_KEYS.feedbacks, CACHE[STORAGE_KEYS.feedbacks]);
   saveDataLocal(STORAGE_KEYS.notifications, CACHE[STORAGE_KEYS.notifications]);
   saveDataLocal(STORAGE_KEYS.metadata, CACHE[STORAGE_KEYS.metadata]);
+  saveDataLocal(STORAGE_KEYS.documents, CACHE[STORAGE_KEYS.documents]);
 }
 
 async function flushAllPending() {
@@ -691,7 +712,124 @@ function getImageUrl(item) {
   if (item.url && item.url.startsWith('http')) return item.url;
   return item.url || '';
 }
+function uploadToCosGeneric(file, onProgress) {
+  return new Promise((resolve, reject) => {
+    if (!COS_CONFIG.enabled || !COS_CONFIG.SecretId) {
+      reject(new Error('COS未配置'));
+      return;
+    }
+    var cos = new COS({
+      SecretId: COS_CONFIG.SecretId,
+      SecretKey: COS_CONFIG.SecretKey
+    });
+    var ext = file.name.split('.').pop().toLowerCase();
+    var key = genShortId() + '.' + ext;
+    cos.putObject({
+      Bucket: COS_CONFIG.Bucket,
+      Region: COS_CONFIG.Region,
+      Key: key,
+      Body: file,
+      onProgress: onProgress
+    }, function (err, data) {
+      if (err) reject(err);
+      else resolve({
+        stored_name: key,
+        original_name: file.name,
+        file_size: file.size
+      });
+    });
+  });
+}
+function deleteCosFile(storedName) {
+  return new Promise((resolve, reject) => {
+    var cos = getCosClient();
+    if (!cos) reject(new Error('COS未配置'));
+    cos.deleteObject({
+      Bucket: COS_CONFIG.Bucket,
+      Region: COS_CONFIG.Region,
+      Key: storedName
+    }, (err, data) => {
+      if (err) reject(err);
+      else resolve(data);
+    });
+  });
+}
+function renderDocsPage() {
+  setupNavTabs();
+  if ($('headerUsername')) $('headerUsername').textContent = currentUser();
+  if ($('headerRole')) $('headerRole').textContent = currentRole();
+  var docs = getDocuments().sort((a,b) => (b.upload_time || '') > (a.upload_time || '') ? 1 : -1);
+  renderDocList(docs);
+}
 
+function renderDocList(docs) {
+  var container = $('docListContainer');
+  if (!container) return;
+  if (!docs.length) {
+    container.innerHTML = '<div class="empty-state">暂无文档，请点击上传</div>';
+    return;
+  }
+  var html = '';
+  docs.forEach((doc) => {
+    var canDelete = doc.uploader === currentUser() || currentRole() === 'admin';
+    html += `<div class="image-card" data-stored="${doc.stored_name}">
+      <div class="card-info">
+        <div class="img-name" title="${escapeHtml(doc.original_name)}">${escapeHtml(doc.original_name)}</div>
+        <div class="img-meta"><span>${escapeHtml(doc.uploader)}</span><span>${formatSize(doc.file_size)}</span></div>
+        <div class="card-actions">
+          <button class="download-doc-btn" data-stored="${doc.stored_name}" data-name="${escapeHtml(doc.original_name)}">下载</button>
+          ${canDelete ? `<button class="delete-doc-btn" data-stored="${doc.stored_name}">删除</button>` : ''}
+        </div>
+      </div>
+    </div>`;
+  });
+  container.innerHTML = html;
+
+  container.querySelectorAll('.download-doc-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      var storedName = btn.getAttribute('data-stored');
+      var originalName = btn.getAttribute('data-name');
+      var url = await ensureSignedUrl(storedName);
+      downloadFile(url, originalName);
+    });
+  });
+
+  container.querySelectorAll('.delete-doc-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (confirm('确定删除此文档吗？')) {
+        var stored = btn.getAttribute('data-stored');
+        try {
+          await deleteCosFile(stored);
+          removeDocument(stored);
+          renderDocsPage();
+          showToast('文档已删除');
+        } catch (err) {
+          showToast('删除失败：' + err.message, true);
+        }
+      }
+    });
+  });
+}
+
+function getFileIcon(filename) {
+  var ext = filename.split('.').pop().toLowerCase();
+  if (ext === 'pdf') return '📄';
+  if (['doc','docx'].includes(ext)) return '📝';
+  if (['xls','xlsx'].includes(ext)) return '📊';
+  if (['ppt','pptx'].includes(ext)) return '📽️';
+  return '📁';
+}
+
+function downloadFile(url, filename) {
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
 // ==================== 用户管理 ====================
 function getUsers() { return loadData(STORAGE_KEYS.users) || {}; }
 function saveUsers(users) { saveData(STORAGE_KEYS.users, users); }
@@ -737,6 +875,9 @@ function navigate(page) {
   }
   if (page === 'login' || page === 'register') {
     clearSession();
+  }
+   if (page === 'docs') {
+    renderDocsPage();
   }
 }
 
@@ -815,8 +956,9 @@ async function handleLogout() {
 // ==================== 导航标签 ====================
 function setupNavTabs() {
   var html = '';
-  html += '<a class="nav-tab active" data-page="main" href="javascript:void(0)">反馈系统</a>';
+  html += '<a class="nav-tab" data-page="main" href="javascript:void(0)">反馈系统</a>';
   html += '<a class="nav-tab" data-page="gallery" href="javascript:void(0)">图床管理</a>';
+  html += '<a class="nav-tab" data-page="docs" href="javascript:void(0)">文档管理</a>';   
   if (currentRole() === 'admin') {
     html += '<a class="nav-tab user-mgmt-tab" href="javascript:void(0)">用户管理</a>';
   }
@@ -832,6 +974,10 @@ function setupNavTabs() {
         this.classList.add('active');
       } else if (page === 'gallery') {
         navigate('gallery');
+        qsa('.nav-tab').forEach(function (t) { t.classList.remove('active'); });
+        this.classList.add('active');
+      } else if (page === 'docs') {               
+        navigate('docs');
         qsa('.nav-tab').forEach(function (t) { t.classList.remove('active'); });
         this.classList.add('active');
       } else if (this.classList.contains('user-mgmt-tab')) {
@@ -1799,6 +1945,8 @@ function bindGlobalEvents() {
     e.stopPropagation();
     toggleNotificationPanel();
   });
+  // 文档管理模块事件
+
 
   document.addEventListener('click', function (e) {
     var panel = $('notificationPanel');
@@ -1855,6 +2003,28 @@ function bindGlobalEvents() {
     e.preventDefault();
     navigate('gallery');
   });
+
+  // 文档管理模块事件
+  if ($('docUploadBtn')) {
+    $('docUploadBtn').addEventListener('click', () => $('docFileInput').click());
+    $('docFileInput').addEventListener('change', async function() {
+      if (this.files && this.files[0]) {
+        var file = this.files[0];
+        try {
+          var result = await uploadToCosGeneric(file);
+          addDocument(result.stored_name, result.original_name, result.file_size, currentUser());
+          renderDocsPage();
+          showToast('文档上传成功');
+        } catch (err) {
+          showToast('上传失败：' + err.message, true);
+        }
+        this.value = '';
+      }
+    });
+    if ($('refreshDocsBtn')) {
+      $('refreshDocsBtn').addEventListener('click', () => renderDocsPage());
+    }
+  }
 }
 
 // ==================== 应用初始化 ====================
