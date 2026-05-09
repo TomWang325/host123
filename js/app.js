@@ -463,15 +463,27 @@ function generateSignedUrl(key) {
   return new Promise(function (resolve) {
     var cos = getCosClient();
     if (!cos) { resolve(getCosRawUrl(key)); return; }
+    
+    // 定义万象处理参数（可选，按需求选择一种）
+    var ciQuery = { 'imageMogr2/thumbnail/100p': '' };
+    
+    // 方案C：转PNG（可能增大体积，不推荐）
+    // var ciQuery = { 'imageMogr2/format': 'png' };
+    
     cos.getObjectUrl({
       Bucket: COS_CONFIG.Bucket,
       Region: COS_CONFIG.Region,
       Key: key,
       Sign: true,
-      Expires: 86400
+      Expires: 86400,
+      Query: ciQuery   // 关键：让签名包含这些参数
     }, function (err, data) {
-      if (err) { resolve(getCosRawUrl(key)); }
-      else { resolve(data.Url); }
+      if (err) { 
+        console.warn('getObjectUrl 失败，降级使用原始URL', err);
+        resolve(getCosRawUrl(key)); 
+      } else {
+        resolve(data.Url);
+      }
     });
   });
 }
