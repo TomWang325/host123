@@ -154,6 +154,18 @@ function removeDocument(storedName) {
   var docs = getDocuments().filter(d => d.stored_name !== storedName);
   saveDocuments(docs);
 }
+async function deleteDocument(storedName) {
+  // 1. 删除 COS 上的实际文件
+  await deleteCosFile(storedName);
+  // 2. 从本地元数据中移除
+  const currentDocs = getDocuments();          // 获取当前数组
+  const newDocs = currentDocs.filter(d => d.stored_name !== storedName);
+  saveDocuments(newDocs);                       // 保存到本地（内存+localStorage）
+  // 3. 立即将更新后的元数据上传到 COS，覆盖旧文件
+  await saveDataNow(STORAGE_KEYS.documents, newDocs);
+  // 4. 重新渲染列表
+  renderDocsPage();
+}
 
 // ==================== 密码哈希 (SHA-256) ====================
 var PASSWORD_PEPPER = 'host_img_2026_salt';
@@ -814,9 +826,7 @@ function renderDocList(docs) {
       if (confirm('确定删除此文档吗？')) {
         var stored = btn.getAttribute('data-stored');
         try {
-          await deleteCosFile(stored);   // 调用 COS 删除接口
-          removeDocument(stored);         // 删除本地元数据
-          renderDocsPage();               // 重新渲染
+          await deleteDocument(stored);   // 调用 COS 删除接口
           showToast('文档已删除');
         } catch (err) {
           showToast('删除失败：' + err.message, true);
