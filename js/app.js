@@ -2035,7 +2035,20 @@ function bindGlobalEvents() {
       }
     });
     if ($('refreshDocsBtn')) {
-      $('refreshDocsBtn').addEventListener('click', () => renderDocsPage());
+      // 移除可能存在的旧监听器（避免重复）
+      const oldBtn = $('refreshDocsBtn');
+      const newBtn = oldBtn.cloneNode(true);
+      oldBtn.parentNode.replaceChild(newBtn, oldBtn);
+      newBtn.addEventListener('click', async () => {
+        if (getCosClient()) {
+          await syncFromRemote(STORAGE_KEYS.documents, 'array');
+          renderDocsPage();
+          showToast('已同步最新文档列表');
+        } else {
+          renderDocsPage();
+          showToast('COS未配置，仅显示本地缓存', true);
+        }
+      });
     }
   }
 }
