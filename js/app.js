@@ -254,15 +254,26 @@ function cosGetData(key) {
     }, function (err, data) {
       if (err) { resolve(null); return; }
       var body = data.Body;
-      if (typeof body === 'string') resolve(body);
-      else if (body && body.toString) resolve(body.toString('utf-8'));
-      else resolve(null);
+      var str = '';
+      if (typeof body === 'string') {
+        str = body;
+      } else if (body && typeof body.toString === 'function') {
+        str = body.toString('utf-8');
+      } else if (body && body instanceof ArrayBuffer) {
+        str = new TextDecoder('utf-8').decode(new Uint8Array(body));
+      } else {
+        resolve(null);
+        return;
+      }
+      // 移除可能的首尾空白（BOM或换行）
+      str = str.trim();
+      resolve(str);
     });
   });
 }
 
 function cosPutData(key, encryptedB64) {
-  return new Promise(function (resolve) {
+  return new Promise((resolve) => {
     var cos = getCosClient();
     if (!cos) { console.warn('[COS] 客户端未初始化'); resolve(false); return; }
     cos.putObject({
@@ -270,7 +281,8 @@ function cosPutData(key, encryptedB64) {
       Region: COS_CONFIG.Region,
       Key: COS_DATA_PREFIX + key + '.enc',
       Body: encryptedB64,
-      ContentType: 'text/plain'
+      ContentType: 'text/plain; charset=utf-8',
+      onProgress: null
     }, function (err) {
       if (err) { console.warn('[COS] 上传失败:', err.statusCode, err.error); resolve(false); }
       else { resolve(true); }
