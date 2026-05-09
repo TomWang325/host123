@@ -1343,7 +1343,7 @@ function renderFeedbackList() {
     html += '<div class="add-comment-area">';
     html += '<input class="comment-input" id="comment-input-' + fb.id + '" placeholder="输入评论...">';
     html += '<button class="comment-upload-img" data-fb="' + fb.id + '">图片</button>';
-    html += '<button class="comment-upload-doc" data-fb="' + fb.id + '">📎 文档</button>';
+    html += '<button class="comment-upload-doc" data-fb="' + fb.id + '">文档</button>';
     html += '<input type="file" id="comment-file-' + fb.id + '" accept="image/*" style="display:none;">';
     html += '<input type="file" id="comment-doc-file-' + fb.id + '" accept=".doc,.docx,.pdf,.xls,.xlsx,.ppt,.pptx,.txt" style="display:none;">';
     html += '<button class="comment-submit" data-fb="' + fb.id + '">发送</button>';
