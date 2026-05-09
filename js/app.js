@@ -968,6 +968,7 @@ async function handleRegister(e) {
     created_at: new Date().toISOString()
   };
   saveUsers(users);
+  await saveDataNow(STORAGE_KEYS.users, users);
   showToast('注册成功，请登录');
   navigate('login');
 }
@@ -2252,6 +2253,7 @@ async function changeUserPassword(targetUsername) {
   }
   users[targetUsername].password = await hashPassword(newPassword);
   saveUsers(users);
+  await saveDataNow(STORAGE_KEYS.users, users); 
   showToast('用户 ' + targetUsername + ' 密码已修改');
   // 刷新用户面板显示
   showUserPanel();
@@ -2320,6 +2322,7 @@ async function changePassword() {
   }
   user.password = await hashPassword(new1);
   saveUsers(users);
+  await saveDataNow(STORAGE_KEYS.users, users);
   hidePwdPanel();
   showToast('密码修改成功');
 }
