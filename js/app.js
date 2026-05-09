@@ -1280,7 +1280,10 @@ function renderFeedbackList() {
       });
       html += '</div>';
     }
-
+    if (fb.docs && fb.docs.length) {
+      html += DocIntegration.renderFeedbackDocLinks(fb.docs);
+    }
+    
     html += '<div class="feedback-actions">';
     if (canToggleStatus) {
       html += '<button class="status-toggle-btn" data-id="' + fb.id + '">' + (fb.status === 'pending' ? '标记已处置' : '标记待处置') + '</button>';
@@ -1296,7 +1299,8 @@ function renderFeedbackList() {
       html += '</div>';
     }
     html += '</div>';
-
+    
+    
     var comments = fb.comments || [];
     html += '<div class="comments-section">';
     html += '<div class="comments-title">评论 (' + comments.length + ')</div>';
