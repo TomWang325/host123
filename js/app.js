@@ -1161,122 +1161,110 @@ function renderFeedbackList() {
 }
 
 function bindFeedbackEvents() {
-  const container = $('#feedbackList');
-  if (!container) return;
+  qsa('.status-toggle-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      toggleFeedbackStatus(this.getAttribute('data-id'));
+    });
+  });
 
-  // 移除旧的委托监听器（避免重复注册）
-  container.removeEventListener('click', feedbackClickHandler);
-  container.removeEventListener('input', feedbackInputHandler);
-  container.removeEventListener('blur', feedbackBlurHandler);
+  qsa('.delete-feedback-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      if (confirm('确定删除此反馈吗？')) {
+        deleteFeedback(this.getAttribute('data-id'));
+      }
+    });
+  });
 
-  // 添加新的委托监听器
-  container.addEventListener('click', feedbackClickHandler);
-  container.addEventListener('input', feedbackInputHandler);
-  container.addEventListener('blur', feedbackBlurHandler);
-}
-// 全局 click 委托处理器
-function feedbackClickHandler(e) {
-  const target = e.target;
-
-  // 1. 标记状态按钮
-  if (target.classList.contains('status-toggle-btn')) {
-    toggleFeedbackStatus(target.getAttribute('data-id'));
-  }
-  // 2. 删除反馈按钮
-  else if (target.classList.contains('delete-feedback-btn')) {
-    if (confirm('确定删除此反馈吗？')) {
-      deleteFeedback(target.getAttribute('data-id'));
-    }
-  }
-  // 3. 下发问题按钮（显示/隐藏搜索框）
-  else if (target.classList.contains('assign-btn')) {
-    const id = target.getAttribute('data-id');
-    // 查找同属一个反馈项的搜索框和下拉菜单
-    const feedbackItem = target.closest('.feedback-item');
-    if (!feedbackItem) return;
-    const searchInput = feedbackItem.querySelector('.assign-search');
-    const dropdown = feedbackItem.querySelector('.assign-dropdown');
-    if (searchInput && dropdown) {
-      const visible = searchInput.style.display !== 'none';
+  qsa('.assign-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var id = this.getAttribute('data-id');
+      var searchInput = qs('.assign-search[data-id="' + id + '"]');
+      var dropdown = qs('.assign-dropdown[data-id="' + id + '"]');
+      var visible = searchInput.style.display !== 'none';
       searchInput.style.display = visible ? 'none' : 'inline-block';
-      dropdown.style.display = 'none';
+      if (dropdown) dropdown.style.display = 'none';
       if (!visible) searchInput.focus();
+    });
+  });
+
+  qsa('.assign-search').forEach(function (input) {
+    input.addEventListener('input', function () {
+      var id = this.getAttribute('data-id');
+      var dropdown = qs('.assign-dropdown[data-id="' + id + '"]');
+      var query = this.value.toLowerCase();
+      var users = getUsers();
+      var filtered = Object.keys(users).filter(function (u) {
+        return u !== currentUser() && u.toLowerCase().indexOf(query) !== -1;
+      });
+      if (filtered.length && query) {
+        dropdown.innerHTML = filtered.map(function (u) {
+          return '<div class="assign-option" data-user="' + u + '" data-fb="' + id + '" style="padding:6px 12px;cursor:pointer;font-size:.75rem;">' + escapeHtml(u) + '</div>';
+        }).join('');
+        dropdown.style.display = 'block';
+      } else {
+        dropdown.style.display = 'none';
+      }
+    });
+
+    input.addEventListener('blur', function () {
+      var id = this.getAttribute('data-id');
+      setTimeout(function () {
+        var dd = qs('.assign-dropdown[data-id="' + id + '"]');
+        if (dd) dd.style.display = 'none';
+      }, 200);
+    });
+  });
+
+  document.addEventListener('click', function (e) {
+    if (e.target.classList.contains('assign-option')) {
+      var userId = e.target.getAttribute('data-user');
+      var fbId = e.target.getAttribute('data-fb');
+      assignFeedback(fbId, userId);
+      var dd = qs('.assign-dropdown[data-id="' + fbId + '"]');
+      var si = qs('.assign-search[data-id="' + fbId + '"]');
+      if (dd) dd.style.display = 'none';
+      if (si) { si.style.display = 'none'; si.value = ''; }
     }
-  }
-  // 4. 评论提交按钮
-  else if (target.classList.contains('comment-submit')) {
-    const fbId = target.getAttribute('data-fb');
-    const input = document.getElementById(`comment-input-${fbId}`);
-    const content = input ? input.value.trim() : '';
-    const images = commentPendingImages[fbId] || [];
-    if (!content && !images.length) {
-      showToast('请输入评论内容', true);
-      return;
-    }
-    addComment(fbId, content, images);
-  }
-  // 5. 评论图片上传按钮
-  else if (target.classList.contains('comment-upload-img')) {
-    const fbId = target.getAttribute('data-fb');
-    const fileInput = document.getElementById(`comment-file-${fbId}`);
-    if (fileInput) fileInput.click();
-  }
-  // 6. 删除评论按钮
-  else if (target.classList.contains('comment-delete')) {
-    if (confirm('确定删除此评论吗？')) {
-      deleteComment(target.getAttribute('data-fb'), target.getAttribute('data-cm'));
-    }
-  }
-  // 7. 选择下发用户的选项（动态生成的下拉项）
-  else if (target.classList.contains('assign-option')) {
-    const userId = target.getAttribute('data-user');
-    const fbId = target.getAttribute('data-fb');
-    assignFeedback(fbId, userId);
-    // 关闭对应的搜索框和下拉菜单
-    const feedbackItem = target.closest('.feedback-item');
-    if (feedbackItem) {
-      const searchInput = feedbackItem.querySelector('.assign-search');
-      const dropdown = feedbackItem.querySelector('.assign-dropdown');
-      if (searchInput) searchInput.style.display = 'none';
-      if (dropdown) dropdown.style.display = 'none';
-      if (searchInput) searchInput.value = '';
-    }
-  }
+  });
+
+  qsa('.comment-submit').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var fbId = this.getAttribute('data-fb');
+      var input = $('comment-input-' + fbId);
+      var content = (input ? input.value : '').trim();
+      var images = commentPendingImages[fbId] || [];
+      if (!content && !images.length) { showToast('请输入评论内容', true); return; }
+      addComment(fbId, content, images);
+    });
+  });
+
+  qsa('.comment-upload-img').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var fbId = this.getAttribute('data-fb');
+      var fileInput = $('comment-file-' + fbId);
+      if (fileInput) fileInput.click();
+    });
+  });
+
+  qsa('input[type=file][id^="comment-file-"]').forEach(function (input) {
+    input.addEventListener('change', async function () {
+      var fbId = this.id.replace('comment-file-', '');
+      if (this.files[0]) {
+        await uploadCommentImage(fbId, this.files[0]);
+        this.value = '';
+      }
+    });
+  });
+
+  qsa('.comment-delete').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      if (confirm('确定删除此评论吗？')) {
+        deleteComment(this.getAttribute('data-fb'), this.getAttribute('data-cm'));
+      }
+    });
+  });
 }
 
-// 全局 input 委托处理器（用于搜索用户）
-function feedbackInputHandler(e) {
-  const target = e.target;
-  if (!target.classList.contains('assign-search')) return;
-
-  const id = target.getAttribute('data-id');
-  const feedbackItem = target.closest('.feedback-item');
-  if (!feedbackItem) return;
-  const dropdown = feedbackItem.querySelector('.assign-dropdown');
-  const query = target.value.toLowerCase();
-  const users = getUsers();
-  const filtered = Object.keys(users).filter(u => u !== currentUser() && u.toLowerCase().includes(query));
-
-  if (filtered.length && query) {
-    dropdown.innerHTML = filtered.map(u => `<div class="assign-option" data-user="${escapeHtml(u)}" data-fb="${id}" style="padding:6px 12px;cursor:pointer;font-size:.75rem;">${escapeHtml(u)}</div>`).join('');
-    dropdown.style.display = 'block';
-  } else {
-    dropdown.style.display = 'none';
-  }
-}
-
-// 全局 blur 委托处理器（延迟隐藏下拉菜单）
-function feedbackBlurHandler(e) {
-  const target = e.target;
-  if (!target.classList.contains('assign-search')) return;
-  const feedbackItem = target.closest('.feedback-item');
-  if (feedbackItem) {
-    const dropdown = feedbackItem.querySelector('.assign-dropdown');
-    setTimeout(() => {
-      if (dropdown) dropdown.style.display = 'none';
-    }, 200);
-  }
-}
 function submitFeedback() {
   var content = $('feedbackContent').value.trim();
   if (!content) { showToast('反馈内容不能为空', true); return; }
