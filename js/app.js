@@ -151,52 +151,53 @@ async function hashPassword(password) {
 var ENC_KEY = null;
 
 async function initEncSalt() {
-  if (!getCosClient()) {
-    let salt = localStorage.getItem('host_enc_salt');
-    if (!salt) {
-      let saltBytes = crypto.getRandomValues(new Uint8Array(16));
-      salt = Array.from(saltBytes).map(b => b.toString(16).padStart(2,'0')).join('');
-      localStorage.setItem('host_enc_salt', salt);
-    }
-    return salt;
+  // 如果 COS 可用，优先从 COS 读取全局盐
+  if (getCosClient()) {
+    let cos = getCosClient();
+    try {
+      let res = await new Promise((resolve, reject) => {
+        cos.getObject({
+          Bucket: COS_CONFIG.Bucket,
+          Region: COS_CONFIG.Region,
+          Key: 'host_data/_enc_salt.txt'
+        }, (err, data) => {
+          if (err) reject(err);
+          else resolve(data.Body.toString('utf-8'));
+        });
+      });
+      let remoteSalt = res.trim();
+      if (remoteSalt && remoteSalt.length === 32) {
+        localStorage.setItem('host_enc_salt', remoteSalt);
+        return remoteSalt;
+      }
+    } catch(e) { /* 文件不存在，继续生成新盐 */ }
   }
 
-  let cos = getCosClient();
-  let remoteSalt = null;
-  try {
-    let res = await new Promise((resolve, reject) => {
-      cos.getObject({
-        Bucket: COS_CONFIG.Bucket,
-        Region: COS_CONFIG.Region,
-        Key: 'host_data/_enc_salt.txt'
-      }, (err, data) => {
-        if (err) reject(err);
-        else resolve(data.Body.toString('utf-8'));
-      });
-    });
-    remoteSalt = res.trim();
-  } catch(e) {}
-
-  if (remoteSalt && remoteSalt.length === 32) {
-    localStorage.setItem('host_enc_salt', remoteSalt);
-    return remoteSalt;
-  } else {
+  // 如果没有 COS 或远程无盐，则使用本地盐或生成新盐
+  let salt = localStorage.getItem('host_enc_salt');
+  if (!salt || salt.length !== 32) {
     let saltBytes = crypto.getRandomValues(new Uint8Array(16));
-    let newSalt = Array.from(saltBytes).map(b => b.toString(16).padStart(2,'0')).join('');
-    localStorage.setItem('host_enc_salt', newSalt);
+    salt = Array.from(saltBytes).map(b => b.toString(16).padStart(2,'0')).join('');
+    localStorage.setItem('host_enc_salt', salt);
+  }
+
+  // 如果有 COS 且远程无盐，则上传当前盐
+  if (getCosClient()) {
+    let cos = getCosClient();
     try {
       await new Promise((resolve, reject) => {
         cos.putObject({
           Bucket: COS_CONFIG.Bucket,
           Region: COS_CONFIG.Region,
           Key: 'host_data/_enc_salt.txt',
-          Body: newSalt,
+          Body: salt,
           ContentType: 'text/plain'
         }, err => err ? reject(err) : resolve());
       });
+      console.log('已上传加密盐到 COS');
     } catch(e) { console.warn('上传盐失败', e); }
-    return newSalt;
   }
+  return salt;
 }
 
 async function getEncKey() {
