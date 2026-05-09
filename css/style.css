@@ -78,7 +78,7 @@ body{font-family:'Segoe UI',Roboto,'Helvetica Neue',sans-serif;background:#f5f7f
 .preview-image-wrapper{position:relative;display:inline-block}
 .preview-image-wrapper img{width:60px;height:60px;object-fit:cover;border-radius:8px;border:1px solid #e2e8f0}
 .preview-remove{position:absolute;top:-6px;right:-6px;background:rgba(0,0,0,.6);color:#fff;border-radius:50%;width:18px;height:18px;display:flex;align-items:center;justify-content:center;font-size:12px;cursor:pointer}
-
+.comment-upload-doc{background: #eef2ff;border: none;padding: 8px 12px;border-radius: 40px;cursor: pointer;font-size: .8rem}
 .feedback-actions{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap}
 .assign-btn,.delete-feedback-btn,.status-toggle-btn{background:#f1f5f9;border:none;padding:6px 14px;border-radius:40px;font-size:.7rem;cursor:pointer;transition:.2s}
 .assign-btn{background:#eef2ff;color:#3b82f6}
