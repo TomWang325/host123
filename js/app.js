@@ -1329,7 +1329,7 @@ function renderFeedbackList() {
         c.docs.forEach(docStored => {
           const docMeta = getDocuments().find(d => d.stored_name === docStored);
           if (docMeta) {
-            html += `<div class="doc-link" style="display:inline-block; margin-right:12px;">📄 <a href="#" class="download-comment-doc" data-stored="${docStored}" data-name="${escapeHtml(docMeta.original_name)}">${escapeHtml(docMeta.original_name)}</a></div>`;
+            html += `<div class="doc-link" style="display:inline-block; margin-right:12px;">📄 <span class="download-comment-doc" style="cursor:pointer; color:#3b82f6; text-decoration:underline;" data-stored="${docStored}" data-name="${escapeHtml(docMeta.original_name)}">${escapeHtml(docMeta.original_name)}</span></div>`;
           }
         });
         html += '</div>';
@@ -1372,8 +1372,38 @@ function renderFeedbackList() {
       }).catch(err => console.warn('更新反馈图片失败', storedName, err));
     });
   }, 150);
+
+  // 绑定反馈文档下载
+  container.querySelectorAll('.download-feedback-doc').forEach(link => {
+    link.addEventListener('click', async (e) => {
+      e.preventDefault();  // 虽然不是 <a> 但保留无害
+      const stored = link.getAttribute('data-stored');
+      const name = link.getAttribute('data-name');
+      try {
+        const url = await ensureSignedUrl(stored);
+        downloadFile(url, name);
+      } catch (err) {
+        showToast('下载失败：' + err.message, true);
+      }
+    });
+  });
   
-  // 绑定评论文档上传按钮
+  // 绑定评论文档下载
+  container.querySelectorAll('.download-comment-doc').forEach(link => {
+    link.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const stored = link.getAttribute('data-stored');
+      const name = link.getAttribute('data-name');
+      try {
+        const url = await ensureSignedUrl(stored);
+        downloadFile(url, name);
+      } catch (err) {
+        showToast('下载失败：' + err.message, true);
+      }
+    });
+  });
+  
+    // 绑定评论文档上传按钮
   container.querySelectorAll('.comment-upload-doc').forEach(btn => {
     btn.addEventListener('click', (e) => {
       const fbId = btn.getAttribute('data-fb');
@@ -1883,39 +1913,6 @@ const DocIntegration = (function() {
       html += '</div>';
       return html;
     },
-
-    // 绑定反馈文档的下载点击事件（在每次渲染反馈列表后调用）
-    bindFeedbackDocEvents: (container = document) => {
-      container.querySelectorAll('.download-feedback-doc').forEach(link => {
-        link.removeEventListener('click', window._docFeedbackHandler);
-        const handler = async (e) => {
-          e.preventDefault();
-          const stored = e.currentTarget.getAttribute('data-stored');
-          const name = e.currentTarget.getAttribute('data-name');
-          const url = await ensureSignedUrl(stored);
-          downloadFile(url, name);
-        };
-        link.addEventListener('click', handler);
-        // 保存以便将来移除（可选）
-        link._docFeedbackHandler = handler;
-      });
-    },
-
-    // 绑定评论文档的下载点击事件
-    bindCommentDocEvents: (container = document) => {
-      container.querySelectorAll('.download-comment-doc').forEach(link => {
-        link.removeEventListener('click', window._docCommentHandler);
-        const handler = async (e) => {
-          e.preventDefault();
-          const stored = e.currentTarget.getAttribute('data-stored');
-          const name = e.currentTarget.getAttribute('data-name');
-          const url = await ensureSignedUrl(stored);
-          downloadFile(url, name);
-        };
-        link.addEventListener('click', handler);
-        link._docCommentHandler = handler;
-      });
-    }
   };
 })();
 
