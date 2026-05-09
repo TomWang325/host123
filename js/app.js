@@ -1025,6 +1025,7 @@ function renderFeedbackSystem() {
   $('headerUsername').textContent = currentUser();
   $('headerRole').textContent = currentRole();
   initStatusFilter();
+  DocIntegration.initFeedbackDocSelector();
   loadFeedbacks();
   loadImagesForFeedback();
   updateUnreadBadge();
@@ -1469,6 +1470,7 @@ function submitFeedback() {
     author: currentUser(),
     content: content,
     images: selectedImages.slice(),
+    docs: DocIntegration.getSelectedFeedbackDocs(),
     status: 'pending',
     created_at: new Date().toISOString(),
     comments: []
@@ -1477,6 +1479,7 @@ function submitFeedback() {
   saveFeedbacks(feedbacks);
   $('feedbackContent').value = '';
   selectedImages = [];
+  DocIntegration.clearFeedbackSelection();
   updateSelectedHint();
   $('uploadProgress').textContent = '';
   showToast('反馈已提交');
