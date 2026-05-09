@@ -485,11 +485,15 @@ function generateSignedUrl(key) {
     var cos = getCosClient();
     if (!cos) { resolve(getCosRawUrl(key)); return; }
     
-    // 定义万象处理参数（可选，按需求选择一种）
-    var ciQuery = { 'imageMogr2/thumbnail/100p': '' };
+    // 判断是否为图片文件（根据扩展名）
+    var ext = key.split('.').pop().toLowerCase();
+    var isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'].includes(ext);
     
-    // 方案C：转PNG（可能增大体积，不推荐）
-    // var ciQuery = { 'imageMogr2/format': 'png' };
+    // 仅对图片添加万象处理参数（使用无损的 auto-orient 或 thumbnail/100p）
+    var queryParams = {};
+    if (isImage) {
+      queryParams = { 'imageMogr2/auto-orient': '' };  // 或者 thumbnail/100p
+    }
     
     cos.getObjectUrl({
       Bucket: COS_CONFIG.Bucket,
@@ -497,7 +501,7 @@ function generateSignedUrl(key) {
       Key: key,
       Sign: true,
       Expires: 86400,
-      Query: ciQuery   // 关键：让签名包含这些参数
+      Query: queryParams   // 非图片文件为空对象，不添加任何参数
     }, function (err, data) {
       if (err) { 
         console.warn('getObjectUrl 失败，降级使用原始URL', err);
