@@ -2181,15 +2181,12 @@ function deleteNotification(id) {
 
 // ==================== 用户管理面板 ====================
 async function showUserPanel() {
-  // 1. 强制从 COS 同步最新用户数据（覆盖本地缓存）
+  // 1. 强制从 COS 同步最新用户数据
   if (getCosClient()) {
     await syncFromRemote(STORAGE_KEYS.users, 'object');
   }
   
-  // 2. 获取最新用户列表
   const users = getUsers();
-  
-  // 3. 生成表格 HTML（与原逻辑相同，但确保 users 是最新的）
   let html = '<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse;">';
   html += '<thead><tr><th>用户名</th><th>角色</th><th>注册时间</th><th>操作</th></tr></thead><tbody>';
   Object.keys(users).forEach(username => {
@@ -2205,8 +2202,7 @@ async function showUserPanel() {
     } else {
       html += '<span style="color:#94a3b8;">（当前用户）</span>';
     }
-    html += '</td>';
-    html += '</tr>';
+    html += '</td></tr>';
   });
   html += '</tbody></table></div>';
   
@@ -2214,14 +2210,26 @@ async function showUserPanel() {
   if (panelBody) panelBody.innerHTML = html;
   document.getElementById('userPanelOverlay').classList.add('show');
   
-  // 绑定操作按钮事件（如果原来有绑定，需要重新绑定）
+  // 绑定修改密码按钮事件
   document.querySelectorAll('.admin-change-pwd-btn').forEach(btn => {
-    btn.removeEventListener('click', changeHandler);
-    btn.addEventListener('click', () => changeUserPassword(btn.getAttribute('data-username')));
+    btn.removeEventListener('click', window._pwdHandler);
+    const handler = async () => {
+      const username = btn.getAttribute('data-username');
+      await changeUserPassword(username);
+    };
+    btn.addEventListener('click', handler);
+    window._pwdHandler = handler;
   });
+  
+  // 绑定删除用户按钮事件
   document.querySelectorAll('.admin-delete-user-btn').forEach(btn => {
-    btn.removeEventListener('click', deleteHandler);
-    btn.addEventListener('click', () => deleteUser(btn.getAttribute('data-username')));
+    btn.removeEventListener('click', window._delHandler);
+    const handler = async () => {
+      const username = btn.getAttribute('data-username');
+      await deleteUser(username);
+    };
+    btn.addEventListener('click', handler);
+    window._delHandler = handler;
   });
 }
 async function verifyAdminPassword() {
