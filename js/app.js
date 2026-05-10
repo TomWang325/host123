@@ -802,16 +802,14 @@ function renderDocList(docs) {
         <div class="img-name" title="${escapeHtml(doc.original_name)}">${escapeHtml(doc.original_name)}</div>
         <div class="img-meta"><span>${escapeHtml(doc.uploader)}</span><span>${formatSize(doc.file_size)}</span></div>
         <div class="card-actions">
-          <button class="download-doc-btn" data-stored="${doc.stored_name}" data-name="${escapeHtml(doc.original_name)}">下载</button>
-          ${canDelete ? `<button class="delete-doc-btn" data-stored="${doc.stored_name}">删除</button>` : ''}
+          <span class="download-doc-btn" data-stored="${doc.stored_name}" data-name="${escapeHtml(doc.original_name)}" style="background:#eef2ff;border:none;flex:1;padding:6px;border-radius:40px;font-size:.7rem;cursor:pointer;color:#3b82f6;display:flex;align-items:center;justify-content:center;gap:4px;">下载</span>
+          ${canDelete ? `<button class="delete-doc-btn" data-stored="${doc.stored_name}" style="background:#ef4444;color:#fff;border:none;flex:1;padding:6px;border-radius:40px;font-size:.7rem;cursor:pointer;">删除</button>` : ''}
         </div>
       </div>
     </div>`;
   });
   container.innerHTML = html;
-  DocIntegration.bindFeedbackDocEvents(container);
-  DocIntegration.bindCommentDocEvents(container);
-  
+
   container.querySelectorAll('.download-doc-btn').forEach(btn => {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
