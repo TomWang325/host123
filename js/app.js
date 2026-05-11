@@ -2189,7 +2189,7 @@ await syncFromRemote(STORAGE_KEYS.users, 'object');
   
 
 const users = getUsers();
-  let html = '<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse;">';
+  // let html = '<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse;">';
   let html = '<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; background:white;">';
 html += '<thead><tr><th>用户名</th><th>角色</th><th>注册时间</th><th>操作</th></tr></thead><tbody>';
   Object.keys(users).forEach(username => {
