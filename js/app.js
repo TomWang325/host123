@@ -2189,37 +2189,26 @@ await syncFromRemote(STORAGE_KEYS.users, 'object');
   
 
 const users = getUsers();
-  // let html = '<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse;">';
-  let html = '<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; background:white;">';
+let html = '<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; background:white;">';
 html += '<thead><tr><th>用户名</th><th>角色</th><th>注册时间</th><th>操作</th></tr></thead><tbody>';
-  Object.keys(users).forEach(username => {
 
-  for (const username in users) {
-const user = users[username];
+for (const username in users) {
+    const user = users[username];
     html += '<tr>';
     html += '<td>' + escapeHtml(username) + '</td>';
     html += '<td>' + escapeHtml(user.role || 'user') + '</td>';
     html += '<td>' + (user.created_at ? formatTime(user.created_at) : '-') + '</td>';
     html += '<td>';
-    html += `<tr>
-      <td>${escapeHtml(username)}</td>
-      <td>${escapeHtml(user.role || 'user')}</td>
-      <td>${user.created_at ? formatTime(user.created_at) : '-'}</td>
-      <td>`;
-if (username !== currentUser()) {
-      html += '<button class="admin-change-pwd-btn" data-username="' + escapeHtml(username) + '" style="margin-right:8px;">修改密码</button>';
-      html += '<button class="admin-delete-user-btn" data-username="' + escapeHtml(username) + '">删除用户</button>';
-      html += `<button class="admin-change-pwd-btn" data-username="${escapeHtml(username)}" style="margin-right:10px;">修改密码</button>`;
-      html += `<button class="admin-delete-user-btn" data-username="${escapeHtml(username)}">删除</button>`;
-} else {
-      html += '<span style="color:#94a3b8;">（当前用户）</span>';
-      html += '<em>当前用户</em>';
-}
+    if (username !== currentUser()) {
+        html += `<button class="admin-change-pwd-btn" data-username="${escapeHtml(username)}" style="margin-right:10px;">修改密码</button>`;
+        html += `<button class="admin-delete-user-btn" data-username="${escapeHtml(username)}">删除</button>`;
+    } else {
+        html += '<span style="color:#94a3b8;">（当前用户）</span>';
+    }
     html += '</td></tr>';
-  });
-    html += `</td></tr>`;
-  }
-html += '</tbody></table></div>';
+}
+
+html += '</tbody></table></div>'
   
 
 const panelBody = document.getElementById('userPanelBody');
