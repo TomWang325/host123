@@ -1584,7 +1584,7 @@ function deleteFeedback(id) {
   showToast('反馈已删除');
 }
 
-function addComment(feedbackId, content, images) {
+function addComment(feedbackId, content, images,docs) {
   var feedbacks = getFeedbacks();
   var idx = feedbacks.findIndex(function (fb) { return fb.id === feedbackId; });
   if (idx === -1) return;
