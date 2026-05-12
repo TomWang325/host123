@@ -777,15 +777,15 @@ async function renderDocsPage() {
   setupNavTabs();
   if ($('headerUsername3')) $('headerUsername3').textContent = currentUser();
   if ($('headerRole3')) $('headerRole3').textContent = currentRole();
-  
-  // 强制从 COS 同步最新文档元数据（确保本地与云端一致）
+
+  // 从 COS 拉取最新数据并渲染
   if (getCosClient()) {
     await syncFromRemote(STORAGE_KEYS.documents, 'array');
   }
-  
-  var docs = getDocuments().sort((a,b) => (b.upload_time || '') > (a.upload_time || '') ? 1 : -1);
-  renderDocList(docs);
+  const allDocs = getDocuments().sort((a,b) => (b.upload_time||'') > (a.upload_time||'') ? 1 : -1);
+  renderDocList(allDocs);
 }
+
 
 function renderDocList(docs) {
   var container = $('docListContainer');
@@ -2367,7 +2367,6 @@ function bindGlobalEvents() {
     e.stopPropagation();
     toggleNotificationPanel();
   });
-  // 文档管理模块事件
 
 
   document.addEventListener('click', function (e) {
@@ -2487,6 +2486,62 @@ async function initApp() {
   } else {
     navigate('login');
   }
+
+  // 文档管理页搜索/刷新功能（静态元素延迟绑定）
+  (function initDocSearch() {
+    let bound = false;
+    const tryBind = () => {
+      const searchInput = document.getElementById('docSearchInput');
+      const searchBtn = document.getElementById('searchRefreshBtn');
+      if (!searchInput || !searchBtn) {
+        // 元素未就绪，稍后重试
+        setTimeout(tryBind, 200);
+        return;
+      }
+      if (bound) return;
+      bound = true;
+
+      let fullDocList = [];
+      const fetchFromCos = async () => {
+        if (getCosClient()) await syncFromRemote(STORAGE_KEYS.documents, 'array');
+        fullDocList = getDocuments().sort((a,b) => (b.upload_time||'') > (a.upload_time||'') ? 1 : -1);
+        return fullDocList;
+      };
+      const render = (docs) => { renderDocList(docs); };
+      const refresh = async () => {
+        await fetchFromCos();
+        render(fullDocList);
+        showToast('已刷新文档列表');
+      };
+      const search = (keyword) => {
+        if (!keyword.trim()) {
+          render(fullDocList);
+          showToast('已显示全部');
+        } else {
+          const filtered = fullDocList.filter(doc => doc.original_name.toLowerCase().includes(keyword.toLowerCase()));
+          render(filtered);
+          showToast(`找到 ${filtered.length} 个文档`);
+        }
+      };
+      const handler = async () => {
+        const keyword = searchInput.value.trim();
+        if (keyword === '') {
+          await refresh();
+        } else {
+          if (fullDocList.length === 0) await fetchFromCos();
+          search(keyword);
+        }
+      };
+      // 绑定事件
+      searchBtn.removeEventListener('click', handler);
+      searchBtn.addEventListener('click', handler);
+      searchInput.removeEventListener('keypress', searchInput._keyHandler);
+      const keyHandler = (e) => { if (e.key === 'Enter') { e.preventDefault(); handler(); } };
+      searchInput.addEventListener('keypress', keyHandler);
+      searchInput._keyHandler = keyHandler;
+    };
+    tryBind();
+  })();
 }
 
 document.addEventListener('DOMContentLoaded', initApp);
