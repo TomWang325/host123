@@ -786,6 +786,55 @@ async function renderDocsPage() {
   renderDocList(allDocs);
 }
 
+var ADMIN_MODULES = {
+  users: { title: '用户管理', icon: '&#128101;' }
+};
+var currentAdminModule = 'users';
+
+function renderAdminModule(moduleId) {
+  currentAdminModule = moduleId;
+  var cfg = ADMIN_MODULES[moduleId];
+  if ($('adminModuleTitle')) $('adminModuleTitle').textContent = cfg ? cfg.title : '';
+
+  qsa('.sidebar-item').forEach(function (el) {
+    el.classList.toggle('active', el.getAttribute('data-module') === moduleId);
+  });
+
+  if (moduleId === 'users') {
+    renderAdminUserTable($('adminModuleBody'));
+  }
+}
+
+async function renderAdminPage() {
+  if (currentRole() !== 'admin') {
+    navigate('main');
+    return;
+  }
+  setupNavTabs();
+  if ($('headerUsername4')) $('headerUsername4').textContent = currentUser();
+  if ($('headerRole4')) $('headerRole4').textContent = currentRole();
+  if (getCosClient()) {
+    await syncFromRemote(STORAGE_KEYS.users, 'object');
+  }
+  renderAdminModule('users');
+  updateUnreadBadge();
+
+  qsa('#adminSidebar .sidebar-item').forEach(function (item) {
+    item.addEventListener('click', function () {
+      var moduleId = item.getAttribute('data-module');
+      if (moduleId === 'users') {
+        if (getCosClient()) {
+          syncFromRemote(STORAGE_KEYS.users, 'object').then(function () {
+            renderAdminModule(moduleId);
+          });
+        } else {
+          renderAdminModule(moduleId);
+        }
+      }
+    });
+  });
+}
+
 
 function renderDocList(docs) {
   var container = $('docListContainer');
@@ -902,6 +951,9 @@ function navigate(page) {
    if (page === 'docs') {
     renderDocsPage();
   }
+  if (page === 'admin') {
+    renderAdminPage();
+  }
 }
 
 function checkAuth() {
@@ -984,11 +1036,12 @@ function setupNavTabs() {
   html += '<a class="nav-tab" data-page="gallery" href="javascript:void(0)">图片管理</a>';
   html += '<a class="nav-tab" data-page="docs" href="javascript:void(0)">文档管理</a>';   
   if (currentRole() === 'admin') {
-    html += '<a class="nav-tab user-mgmt-tab" href="javascript:void(0)">用户管理</a>';
+    html += '<a class="nav-tab" data-page="admin" href="javascript:void(0)">管理员</a>';
   }
   $('navTabs').innerHTML = html;
   if ($('navTabs2')) $('navTabs2').innerHTML = html;
   if ($('navTabs3')) $('navTabs3').innerHTML = html;
+  if ($('navTabs4')) $('navTabs4').innerHTML = html;
 
   qsa('.nav-tab').forEach(function (tab) {
     tab.addEventListener('click', function () {
@@ -1005,8 +1058,10 @@ function setupNavTabs() {
         navigate('docs');
         qsa('.nav-tab').forEach(function (t) { t.classList.remove('active'); });
         this.classList.add('active');
-      } else if (this.classList.contains('user-mgmt-tab')) {
-        showUserPanel();
+      } else if (page === 'admin') {
+        navigate('admin');
+        qsa('.nav-tab').forEach(function (t) { t.classList.remove('active'); });
+        this.classList.add('active');
       }
     });
   });
@@ -2089,6 +2144,7 @@ function updateUnreadBadge() {
   setBadge($('unreadBadge'));
   setBadge($('unreadBadge2'));
   setBadge($('unreadBadge3'));
+  setBadge($('unreadBadge4'));
 }
 
 function renderNotificationList(list) {
@@ -2180,56 +2236,58 @@ function deleteNotification(id) {
 }
 
 // ==================== 用户管理面板 ====================
-async function showUserPanel() {
-  // 强制从 COS 同步最新用户数据
-  if (getCosClient()) {
-    await syncFromRemote(STORAGE_KEYS.users, 'object');
-  }
-
+function renderAdminUserTable(targetEl) {
+  if (!targetEl) return;
   const users = getUsers();
-  let html = '<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; background:white;">';
+  let html = '<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; background:white;table-layout:fixed;">';
+  html += '<colgroup><col style="width:20%"><col style="width:12%"><col style="width:28%"><col style="width:40%"></colgroup>';
   html += '<thead><tr><th>用户名</th><th>角色</th><th>注册时间</th><th>操作</th></tr></thead><tbody>';
 
   for (const username in users) {
     const user = users[username];
-    html += `<tr>
-      <td>${escapeHtml(username)}</td>
-      <td>${escapeHtml(user.role || 'user')}</td>
-      <td>${user.created_at ? formatTime(user.created_at) : '-'}</td>
-      <td>`;
+    html += '<tr><td>' + escapeHtml(username) + '</td><td>' + escapeHtml(user.role || 'user') + '</td><td>' + (user.created_at ? formatTime(user.created_at) : '-') + '</td><td>';
     if (username !== currentUser()) {
-      html += `<button class="admin-change-pwd-btn" data-username="${escapeHtml(username)}" style="margin-right:10px;">修改密码</button>`;
-      html += `<button class="admin-delete-user-btn" data-username="${escapeHtml(username)}">删除</button>`;
+      html += '<button class="admin-change-pwd-btn" data-username="' + escapeHtml(username) + '" style="margin-right:10px;">修改密码</button>';
+      html += '<button class="admin-delete-user-btn" data-username="' + escapeHtml(username) + '">删除</button>';
     } else {
       html += '<em>当前用户</em>';
     }
-    html += `</td></tr>`;
+    html += '</td></tr>';
   }
   html += '</tbody></table></div>';
+  targetEl.innerHTML = html;
 
-  const panelBody = document.getElementById('userPanelBody');
-  if (panelBody) panelBody.innerHTML = html;
-  document.getElementById('userPanelOverlay').classList.add('show');
-
-  // 绑定修改密码按钮（使用 onclick 直接赋值，避免变量冲突）
-  document.querySelectorAll('.admin-change-pwd-btn').forEach(btn => {
-    btn.onclick = async (e) => {
+  targetEl.querySelectorAll('.admin-change-pwd-btn').forEach(function (btn) {
+    btn.onclick = async function (e) {
       e.stopPropagation();
-      const username = btn.getAttribute('data-username');
-      await changeUserPassword(username);
+      await changeUserPassword(btn.getAttribute('data-username'));
     };
   });
-
-  // 绑定删除按钮
-  document.querySelectorAll('.admin-delete-user-btn').forEach(btn => {
-    btn.onclick = async (e) => {
+  targetEl.querySelectorAll('.admin-delete-user-btn').forEach(function (btn) {
+    btn.onclick = async function (e) {
       e.stopPropagation();
-      const username = btn.getAttribute('data-username');
-      if (confirm(`确定要永久删除用户 ${username} 吗？`)) {
+      var username = btn.getAttribute('data-username');
+      if (confirm('确定要永久删除用户 ' + username + ' 吗？')) {
         await deleteUser(username);
       }
     };
   });
+}
+
+function refreshUserManagement() {
+  if (currentPage === 'admin' && currentAdminModule === 'users' && $('adminModuleBody')) {
+    renderAdminUserTable($('adminModuleBody'));
+  } else if ($('userPanelOverlay').classList.contains('show') && $('userPanelBody')) {
+    renderAdminUserTable($('userPanelBody'));
+  }
+}
+
+async function showUserPanel() {
+  if (getCosClient()) {
+    await syncFromRemote(STORAGE_KEYS.users, 'object');
+  }
+  renderAdminUserTable($('userPanelBody'));
+  $('userPanelOverlay').classList.add('show');
 }
 async function verifyAdminPassword() {
   const pwd = prompt('请输入您的管理员密码以继续操作：');
@@ -2260,8 +2318,8 @@ async function changeUserPassword(targetUsername) {
   users[targetUsername].password = await hashPassword(newPassword);
   saveUsers(users);
   await saveDataNow(STORAGE_KEYS.users, users);
-  showToast(`用户 ${targetUsername} 密码已修改`);
-  showUserPanel(); // 刷新面板
+  showToast('用户 ' + targetUsername + ' 密码已修改');
+  refreshUserManagement();
 }
 
 async function deleteUser(targetUsername) {
@@ -2274,8 +2332,8 @@ async function deleteUser(targetUsername) {
   delete users[targetUsername];
   saveUsers(users);
   await saveDataNow(STORAGE_KEYS.users, users);
-  showToast(`用户 ${targetUsername} 已删除`);
-  showUserPanel();
+  showToast('用户 ' + targetUsername + ' 已删除');
+  refreshUserManagement();
   if (targetUsername === currentUser()) {
     handleLogout();
   }
@@ -2353,6 +2411,7 @@ function bindGlobalEvents() {
   $('logoutBtn').addEventListener('click', handleLogout);
   if ($('logoutBtn2')) $('logoutBtn2').addEventListener('click', handleLogout);
   if ($('logoutBtn3')) $('logoutBtn3').addEventListener('click', handleLogout);
+  if ($('logoutBtn4')) $('logoutBtn4').addEventListener('click', handleLogout);
 
   $('notificationIcon').addEventListener('click', function (e) {
     e.stopPropagation();
@@ -2364,6 +2423,10 @@ function bindGlobalEvents() {
     toggleNotificationPanel();
   });
   if ($('notificationIcon3')) $('notificationIcon3').addEventListener('click', function (e) {
+    e.stopPropagation();
+    toggleNotificationPanel();
+  });
+  if ($('notificationIcon4')) $('notificationIcon4').addEventListener('click', function (e) {
     e.stopPropagation();
     toggleNotificationPanel();
   });
@@ -2412,11 +2475,12 @@ function bindGlobalEvents() {
   $('changePwdLink').addEventListener('click', function (e) { e.preventDefault(); showPwdPanel(); });
   if ($('changePwdLink2')) $('changePwdLink2').addEventListener('click', function (e) { e.preventDefault(); showPwdPanel(); });
   if ($('changePwdLink3')) $('changePwdLink3').addEventListener('click', function (e) { e.preventDefault(); showPwdPanel(); });
+  if ($('changePwdLink4')) $('changePwdLink4').addEventListener('click', function (e) { e.preventDefault(); showPwdPanel(); });
   $('closePwdPanelBtn').addEventListener('click', hidePwdPanel);
   $('pwdPanelOverlay').addEventListener('click', function (e) { if (e.target === this) hidePwdPanel(); });
   $('changePwdBtn').addEventListener('click', changePassword);
 
-  $('cosSetupLink').addEventListener('click', function (e) { e.preventDefault(); showCosSetupPanel(); });
+  $('cosSetupLink').addEventListener('click', function (e) { e.preventDefault(); if (confirm('请勿泄露配置信息！')) showCosSetupPanel(); });
   $('closeCosSetupBtn').addEventListener('click', hideCosSetupPanel);
   $('cosSetupOverlay').addEventListener('click', function (e) { if (e.target === this) hideCosSetupPanel(); });
   $('cosSetupSaveBtn').addEventListener('click', saveSetupCos);

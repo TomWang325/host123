@@ -245,6 +245,43 @@
     <footer>支持 .doc, .pdf, .xls, .ppt, .txt 等格式 | 文件存储在COS</footer>
   </div>
 </div>
+
+<!-- 管理员页面 -->
+<div class="page-view" id="page-admin" style="display:none">
+  <div class="container">
+    <div class="header">
+      <h1>管理员控制台</h1>
+      <div class="user-info">
+        <span id="headerUsername4"></span> (<span id="headerRole4"></span>)
+        <span class="notification-icon" id="notificationIcon4">
+         消息中心 &#128276; <span class="unread-badge" id="unreadBadge4">0</span>
+        </span>
+        <a href="javascript:void(0)" id="changePwdLink4" class="admin-link">修改密码</a>
+        <a href="javascript:void(0)" id="logoutBtn4" class="logout-link">登出</a>
+      </div>
+    </div>
+
+    <div class="nav-tabs" id="navTabs4"></div>
+
+    <div class="admin-layout">
+      <div class="admin-sidebar" id="adminSidebar">
+        <div class="sidebar-title">功能模块</div>
+        <a class="sidebar-item active" data-module="users">
+          <span class="sidebar-icon">&#128101;</span>
+          <span>用户管理</span>
+        </a>
+      </div>
+      <div class="admin-content" id="adminContent">
+        <div class="admin-section">
+          <h2 class="admin-module-title" id="adminModuleTitle">用户管理</h2>
+          <div id="adminModuleBody"></div>
+        </div>
+      </div>
+    </div>
+
+    <footer>管理员模块 · 更多功能即将上线</footer>
+  </div>
+</div>
   
 <!-- ========== 共享组件 ========== -->
 <div id="toastMsg" class="toast-msg"></div>
