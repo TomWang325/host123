@@ -24,11 +24,11 @@
         <label>密码</label>
         <input type="password" id="loginPassword" required>
       </div>
-      <button type="submit" class="auth-btn">登 录</button>
+      <button type="submit" class="auth-btn">登录</button>
     </form>
     <div class="auth-footer">
-      没有账号？ <a id="toRegisterLink">立即注册</a><br>
-      <a id="cosSetupLink" style="display:none;color:#d97706;font-size:0.7rem;">COS未配置，点此设置</a>
+      没有账号？<a id="toRegisterLink">立即注册</a><br>
+      <a id="cosSetupLink" style="display:none;color:#d97706;font-size:0.7rem;">COS 未配置，点击这里设置</a>
     </div>
   </div>
 </div>
@@ -45,10 +45,10 @@
     </div>
     <div class="input-group">
       <label>SecretKey</label>
-      <input type="password" id="cosSetupKey" placeholder="你的SecretKey">
+      <input type="password" id="cosSetupKey" placeholder="你的 SecretKey">
     </div>
     <div class="input-group">
-      <label>存储桶名称（含APPID）</label>
+      <label>存储桶名称（含 APPID）</label>
       <input type="text" id="cosSetupBucket" placeholder="my-data-1-1312418202">
     </div>
     <div class="input-group">
@@ -63,7 +63,7 @@
 <div class="page-view login-page" id="page-register" style="display:none">
   <div class="auth-card">
     <h1>注册新账号</h1>
-    <div class="auth-sub">请牢记账号密码</div>
+    <div class="auth-sub">请牢记账号和密码</div>
     <div class="error-msg" id="regError" style="display:none"></div>
     <form id="regForm">
       <div class="input-group">
@@ -85,10 +85,10 @@
           <option value="E">
         </datalist>
       </div>
-      <button type="submit" class="auth-btn">注 册</button>
+      <button type="submit" class="auth-btn">注册</button>
     </form>
     <div class="auth-footer">
-      已有账号？ <a id="toLoginLink">去登录</a>
+      已有账号？<a id="toLoginLink">去登录</a>
     </div>
   </div>
 </div>
@@ -97,7 +97,8 @@
 <div class="page-view" id="page-main" style="display:none">
   <div class="container">
     <div class="cos-config-banner" id="cosConfigBanner">
-      腾讯云COS未配置，图片将以Base64存储在浏览器（限2MB）。F12控制台执行 <code>setupCos('SecretId','SecretKey')</code> 配置。
+      腾讯云 COS 未配置，图片将以 Base64 存储在浏览器中（限 2MB）。也可以按 F12 执行
+      <code>setupCos('SecretId','SecretKey')</code> 完成配置。
     </div>
 
     <div class="header">
@@ -105,25 +106,24 @@
       <div class="user-info">
         <span id="headerUsername"></span> (<span id="headerRole"></span>) [<span id="headerGroup"></span>组]
         <span class="notification-icon" id="notificationIcon">
-         消息中心 &#128276; <span class="unread-badge" id="unreadBadge">0</span>
+          消息中心 &#128276; <span class="unread-badge" id="unreadBadge">0</span>
         </span>
         <a href="javascript:void(0)" id="changePwdLink" class="admin-link">修改密码</a>
-        <a href="javascript:void(0)" id="logoutBtn" class="logout-link">登出</a>
+        <a href="javascript:void(0)" id="logoutBtn" class="logout-link">退出</a>
       </div>
-      <p>请尽量将反馈的问题描述具体，上传清晰图片</p>
+      <p>请尽量将反馈的问题描述具体，并上传清晰图片</p>
     </div>
 
-    <!-- 导航标签 -->
     <div class="nav-tabs" id="navTabs"></div>
 
-    <!-- 反馈表单 -->
     <div class="feedback-card">
       <div class="feedback-form-title">提交问题反馈</div>
       <textarea id="feedbackContent" class="feedback-textarea" rows="4" placeholder="请详细描述您的问题或建议..."></textarea>
+
       <div class="image-select-area">
         <div class="drawer-header" id="drawerHeader">
           <div class="drawer-header-left">
-            <span class="drawer-arrow" id="drawerArrow">▶</span>
+            <span class="drawer-arrow" id="drawerArrow">▼</span>
             <span class="image-select-label">关联图片（可选，点击选择已有图片）</span>
           </div>
           <span id="selectedHint" class="selected-hint"></span>
@@ -135,39 +135,36 @@
         </div>
         <div class="upload-new-area">
           <span>或者上传新图片：</span>
-          <button type="button" class="upload-new-btn" id="uploadForFeedbackBtn">上传图片到图床</button>
+          <button type="button" class="upload-new-btn" id="uploadForFeedbackBtn">上传图片到图库</button>
           <input type="file" id="feedbackFileInput" accept="image/png,image/jpeg,image/jpg,image/gif,image/webp,image/bmp" style="display:none">
           <span id="uploadProgress" style="font-size:.75rem;color:#3b82f6;"></span>
         </div>
       </div>
-      <!-- 文档引用区域 -->
-      <div class="doc-select-area" style="margin-top: 16px; padding-top: 16px; border-top: 1px dashed #cfdfed;">
-      <!-- 1. 可折叠的“引用已有文档”抽屉 -->
+
+      <div class="doc-select-area" style="margin-top:16px;padding-top:16px;border-top:1px dashed #cfdfed;">
         <div class="drawer-header" id="docDrawerHeader">
           <div class="drawer-header-left">
-            <span class="drawer-arrow" id="docDrawerArrow">▶</span>
+            <span class="drawer-arrow" id="docDrawerArrow">▼</span>
             <span class="image-select-label">引用已有文档（可选，点击选择）</span>
           </div>
-        <span id="selectedDocHint" class="selected-hint"></span>
-      </div>
-      <div class="drawer-content" id="docDrawerContent">
-        <div id="existingDocsList" class="existing-images">
-          <div class="loading-text">加载文档中...</div>
+          <span id="selectedDocHint" class="selected-hint"></span>
+        </div>
+        <div class="drawer-content" id="docDrawerContent">
+          <div id="existingDocsList" class="existing-images">
+            <div class="loading-text">加载文档中...</div>
+          </div>
+        </div>
+        <div class="upload-new-area" style="margin-top:12px;">
+          <span>或者上传新文档：</span>
+          <button type="button" class="upload-new-btn" id="uploadForFeedbackDocBtn">上传文档到文档库</button>
+          <input type="file" id="feedbackDocFileInput" accept=".doc,.docx,.pdf,.xls,.xlsx,.ppt,.pptx,.txt" style="display:none">
+          <span id="docUploadProgress" style="font-size:.75rem;color:#3b82f6;"></span>
         </div>
       </div>
 
-      <!-- 2. 上传新文档区域 -->
-      <div class="upload-new-area" style="margin-top: 12px;">
-        <span>或者上传新文档：</span>
-        <button type="button" class="upload-new-btn" id="uploadForFeedbackDocBtn">上传文档到文档库</button>
-        <input type="file" id="feedbackDocFileInput" accept=".doc,.docx,.pdf,.xls,.xlsx,.ppt,.pptx,.txt" style="display:none">
-        <span id="docUploadProgress" style="font-size:.75rem;color:#3b82f6;"></span>
-      </div>
-    </div>
       <button id="submitFeedbackBtn" class="submit-feedback-btn">提交反馈</button>
     </div>
 
-    <!-- 筛选栏 -->
     <div class="filter-bar">
       <span class="filter-label">筛选反馈：</span>
       <div class="filter-buttons" id="filterButtons"></div>
@@ -181,30 +178,29 @@
     <div id="feedbackList" class="feedback-list">
       <div class="empty-state">暂无反馈，提交第一条反馈吧</div>
     </div>
-    <footer>Copyright 2026 by hebei.TC | 数据存储在腾讯云COS</footer>
+    <footer>Copyright 2026 by hebei.TC | 数据存储在腾讯云 COS</footer>
   </div>
 </div>
 
-<!-- ========== 图床管理页 ========== -->
+<!-- ========== 图片管理页 ========== -->
 <div class="page-view" id="page-gallery" style="display:none">
   <div class="container">
     <div class="cos-config-banner" id="cosConfigBanner2">
-      腾讯云COS未配置，图片将以Base64存储（限2MB）。请编辑 <code>js/app.js</code> 中的 <code>COS_CONFIG</code>。
+      腾讯云 COS 未配置，图片将以 Base64 存储（限 2MB）。请完善配置后再使用云端存储。
     </div>
 
     <div class="header">
-      <h1>图片管理 - 图床</h1>
+      <h1>图片管理 - 图库</h1>
       <div class="user-info">
         <span id="headerUsername2"></span> (<span id="headerRole2"></span>) [<span id="headerGroup2"></span>组]
         <span class="notification-icon" id="notificationIcon2">
-         消息中心 &#128276; <span class="unread-badge" id="unreadBadge2">0</span>
+          消息中心 &#128276; <span class="unread-badge" id="unreadBadge2">0</span>
         </span>
         <a href="javascript:void(0)" id="changePwdLink2" class="admin-link">修改密码</a>
-        <a href="javascript:void(0)" id="logoutBtn2" class="logout-link">登出</a>
+        <a href="javascript:void(0)" id="logoutBtn2" class="logout-link">退出</a>
       </div>
     </div>
 
-    <!-- 导航标签 -->
     <div class="nav-tabs" id="navTabs2"></div>
 
     <div class="toolbar">
@@ -221,11 +217,11 @@
     <div id="galleryContainer" class="gallery-grid">
       <div class="empty-state">暂无图片，请先上传</div>
     </div>
-    <footer>图片存储在云COS | 支持管理员或上传者删除 | 点击图片可放大</footer>
+    <footer>图片存储在云 COS | 支持管理员或上传者删除 | 点击图片可放大</footer>
   </div>
 </div>
 
-<!-- 新增文档管理页面 -->
+<!-- ========== 文档管理页 ========== -->
 <div class="page-view" id="page-docs" style="display:none">
   <div class="container">
     <div class="header">
@@ -233,10 +229,10 @@
       <div class="user-info">
         <span id="headerUsername3"></span> (<span id="headerRole3"></span>) [<span id="headerGroup3"></span>组]
         <span class="notification-icon" id="notificationIcon3">
-         消息中心 &#128276; <span class="unread-badge" id="unreadBadge3">0</span>
+          消息中心 &#128276; <span class="unread-badge" id="unreadBadge3">0</span>
         </span>
         <a href="javascript:void(0)" id="changePwdLink3" class="admin-link">修改密码</a>
-        <a href="javascript:void(0)" id="logoutBtn3" class="logout-link">登出</a>
+        <a href="javascript:void(0)" id="logoutBtn3" class="logout-link">退出</a>
       </div>
     </div>
 
@@ -245,19 +241,20 @@
     <div class="toolbar">
       <button class="upload-new-btn" id="docUploadBtn">上传文档</button>
       <input type="file" id="docFileInput" accept=".doc,.docx,.pdf,.xls,.xlsx,.ppt,.pptx,.txt" style="display:none">
-      <input type="text" id="docSearchInput" placeholder="🔍 文件搜索" style="flex:1; padding:8px 12px; border-radius:40px; border:1px solid #cfdfed; outline:none;">
+      <input type="text" id="docSearchInput" placeholder="搜索文档" style="flex:1;padding:8px 12px;border-radius:40px;border:1px solid #cfdfed;outline:none;">
       <button class="refresh-btn" id="searchRefreshBtn">搜索</button>
+      <button class="refresh-btn" id="refreshDocsBtn">刷新列表</button>
     </div>
 
     <div id="docListContainer" class="gallery-grid">
       <div class="empty-state">暂无文档，请点击上传</div>
     </div>
 
-    <footer>支持 .doc, .pdf, .xls, .ppt, .txt 等格式 | 文件存储在COS</footer>
+    <footer>支持 .doc、.pdf、.xls、.ppt、.txt 等格式 | 文件存储在 COS</footer>
   </div>
 </div>
 
-<!-- 管理员页面 -->
+<!-- ========== 管理员页面 ========== -->
 <div class="page-view" id="page-admin" style="display:none">
   <div class="container">
     <div class="header">
@@ -265,10 +262,10 @@
       <div class="user-info">
         <span id="headerUsername4"></span> (<span id="headerRole4"></span>) [<span id="headerGroup4"></span>组]
         <span class="notification-icon" id="notificationIcon4">
-         消息中心 &#128276; <span class="unread-badge" id="unreadBadge4">0</span>
+          消息中心 &#128276; <span class="unread-badge" id="unreadBadge4">0</span>
         </span>
         <a href="javascript:void(0)" id="changePwdLink4" class="admin-link">修改密码</a>
-        <a href="javascript:void(0)" id="logoutBtn4" class="logout-link">登出</a>
+        <a href="javascript:void(0)" id="logoutBtn4" class="logout-link">退出</a>
       </div>
     </div>
 
@@ -278,7 +275,7 @@
       <div class="admin-sidebar" id="adminSidebar">
         <div class="sidebar-title">功能模块</div>
         <a class="sidebar-item active" data-module="users">
-          <svg xmlns="http://www.w3.org/2000/svg" id="Layer_1" data-name="Layer 1" viewBox="0 0 24 24" width="1em" height="1em"><path d="M16.043,14H7.957A4.963,4.963,0,0,0,3,18.957V24H21V18.957A4.963,4.963,0,0,0,16.043,14Z"/><circle cx="12" cy="6" r="6"/></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" id="Layer_1" data-name="Layer 1" viewBox="0 0 24 24" width="1em" height="1em"><path d="M16.043,14H7.957A4.963,4.963,0,0,0,3,18.957V24H21V18.957A4.963,4.963,0,0,0,16.043,14Z"></path><circle cx="12" cy="6" r="6"></circle></svg>
           <span>用户管理</span>
         </a>
       </div>
@@ -302,10 +299,10 @@
       </div>
     </div>
 
-    <footer>管理员模块 · 更多功能即将上线</footer>
+    <footer>管理员模块 | 更多功能即将上线</footer>
   </div>
 </div>
-  
+
 <!-- ========== 共享组件 ========== -->
 <div id="toastMsg" class="toast-msg"></div>
 
