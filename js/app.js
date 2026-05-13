@@ -1274,7 +1274,7 @@ function getVisibleFeedbacks() {
   var list = allFeedbacksCache;
   var user = currentUser();
   var role = currentRole();
-
+  var currentUserGroup = getUsers()[user]?.group;
   if (role !== 'admin' || !adminViewMode) {
     list = list.filter(function (fb) {
       return fb.author === user || fb.assigned_to === user || fb.original_author === user;
@@ -1600,6 +1600,7 @@ function submitFeedback() {
   var fb = {
     id: genShortId(),
     author: currentUser(),
+    author_group: getUsers()[currentUser()]?.group || null,
     content: content,
     images: selectedImages.slice(),
     docs: DocIntegration.getSelectedFeedbackDocs(),
