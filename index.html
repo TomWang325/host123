@@ -76,14 +76,15 @@
       </div>
       <div class="input-group">
         <label>选择分组</label>
-        <select id="regGroup" class="auth-input" style="width:100%; padding:12px 16px; border-radius:20px; border:1px solid #cfdfed; font-size:1rem;">
-          <option value="A">A组</option>
-          <option value="B">B组</option>
-          <option value="C">C组</option>
-          <option value="D">D组</option>
-          <option value="E">E组</option>
-  </select>
-</div>
+        <input type="text" id="regGroup" list="groupList" placeholder="请选择或输入分组（A/B/C/D/E）" autocomplete="off">
+        <datalist id="groupList">
+          <option value="A">
+          <option value="B">
+          <option value="C">
+          <option value="D">
+          <option value="E">
+        </datalist>
+      </div>
       <button type="submit" class="auth-btn">注 册</button>
     </form>
     <div class="auth-footer">
@@ -102,7 +103,7 @@
     <div class="header">
       <h1>问题反馈协作系统</h1>
       <div class="user-info">
-        <span id="headerUsername"></span> (<span id="headerRole"></span>)
+        <span id="headerUsername"></span> (<span id="headerRole"></span>) [<span id="headerGroup"></span>组]
         <span class="notification-icon" id="notificationIcon">
          消息中心 &#128276; <span class="unread-badge" id="unreadBadge">0</span>
         </span>
@@ -194,7 +195,7 @@
     <div class="header">
       <h1>图片管理 - 图床</h1>
       <div class="user-info">
-        <span id="headerUsername2"></span> (<span id="headerRole2"></span>)
+        <span id="headerUsername2"></span> (<span id="headerRole2"></span>) [<span id="headerGroup2"></span>组]
         <span class="notification-icon" id="notificationIcon2">
          消息中心 &#128276; <span class="unread-badge" id="unreadBadge2">0</span>
         </span>
@@ -230,7 +231,7 @@
     <div class="header">
       <h1>文档管理 - 共享空间</h1>
       <div class="user-info">
-        <span id="headerUsername3"></span> (<span id="headerRole3"></span>)
+        <span id="headerUsername3"></span> (<span id="headerRole3"></span>) [<span id="headerGroup3"></span>组]
         <span class="notification-icon" id="notificationIcon3">
          消息中心 &#128276; <span class="unread-badge" id="unreadBadge3">0</span>
         </span>
@@ -262,7 +263,7 @@
     <div class="header">
       <h1>管理员控制台</h1>
       <div class="user-info">
-        <span id="headerUsername4"></span> (<span id="headerRole4"></span>)
+        <span id="headerUsername4"></span> (<span id="headerRole4"></span>) [<span id="headerGroup4"></span>组]
         <span class="notification-icon" id="notificationIcon4">
          消息中心 &#128276; <span class="unread-badge" id="unreadBadge4">0</span>
         </span>
@@ -284,6 +285,18 @@
       <div class="admin-content" id="adminContent">
         <div class="admin-section">
           <h2 class="admin-module-title" id="adminModuleTitle">用户管理</h2>
+          <div class="admin-filter-bar" id="adminFilterBar">
+            <input type="text" id="adminUserSearch" class="admin-search-input" placeholder="搜索用户名...">
+            <div class="admin-group-filters" id="adminGroupFilters">
+              <span class="filter-label-text">分组：</span>
+              <button class="group-filter-btn active" data-group="all">全部</button>
+              <button class="group-filter-btn" data-group="A">A组</button>
+              <button class="group-filter-btn" data-group="B">B组</button>
+              <button class="group-filter-btn" data-group="C">C组</button>
+              <button class="group-filter-btn" data-group="D">D组</button>
+              <button class="group-filter-btn" data-group="E">E组</button>
+            </div>
+          </div>
           <div id="adminModuleBody"></div>
         </div>
       </div>

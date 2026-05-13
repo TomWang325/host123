@@ -486,6 +486,11 @@ function currentRole() {
   return s ? s.role : null;
 }
 
+function currentGroup() {
+  var s = getSession();
+  return s ? s.group : null;
+}
+
 // ==================== COS 上传模块 ====================
 var SIGNED_URL_CACHE = {};
 var SIGNED_URL_TTL = 6 * 24 * 60 * 60 * 1000;
@@ -777,6 +782,7 @@ async function renderDocsPage() {
   setupNavTabs();
   if ($('headerUsername3')) $('headerUsername3').textContent = currentUser();
   if ($('headerRole3')) $('headerRole3').textContent = currentRole();
+  if ($('headerGroup3')) $('headerGroup3').textContent = currentGroup();
 
   // 从 COS 拉取最新数据并渲染
   if (getCosClient()) {
@@ -800,9 +806,30 @@ function renderAdminModule(moduleId) {
     el.classList.toggle('active', el.getAttribute('data-module') === moduleId);
   });
 
+  if ($('adminFilterBar')) {
+    $('adminFilterBar').style.display = (moduleId === 'users') ? '' : 'none';
+  }
+
   if (moduleId === 'users') {
     renderAdminUserTable($('adminModuleBody'));
   }
+}
+
+function setupAdminUserFilters() {
+  if ($('adminUserSearch')) {
+    $('adminUserSearch').addEventListener('input', function () {
+      adminUserSearch = this.value;
+      renderAdminUserTable($('adminModuleBody'));
+    });
+  }
+  qsa('#adminGroupFilters .group-filter-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      adminUserGroupFilter = this.getAttribute('data-group');
+      qsa('#adminGroupFilters .group-filter-btn').forEach(function (b) { b.classList.remove('active'); });
+      this.classList.add('active');
+      renderAdminUserTable($('adminModuleBody'));
+    });
+  });
 }
 
 async function renderAdminPage() {
@@ -810,13 +837,17 @@ async function renderAdminPage() {
     navigate('main');
     return;
   }
+  adminUserSearch = '';
+  adminUserGroupFilter = 'all';
   setupNavTabs();
   if ($('headerUsername4')) $('headerUsername4').textContent = currentUser();
   if ($('headerRole4')) $('headerRole4').textContent = currentRole();
+  if ($('headerGroup4')) $('headerGroup4').textContent = currentGroup();
   if (getCosClient()) {
     await syncFromRemote(STORAGE_KEYS.users, 'object');
   }
   renderAdminModule('users');
+  setupAdminUserFilters();
   updateUnreadBadge();
 
   qsa('#adminSidebar .sidebar-item').forEach(function (item) {
@@ -986,7 +1017,7 @@ async function handleLogin(e) {
     $('loginError').style.display = 'block';
     return;
   }
-  setSession({ username: username, role: users[username].role || 'user' });
+  setSession({ username: username, role: users[username].role || 'user', group: users[username].group || '' });
   $('loginError').style.display = 'none';
   navigate('main');
 }
@@ -995,9 +1026,15 @@ async function handleRegister(e) {
   e.preventDefault();
   var username = $('regUsername').value.trim();
   var password = $('regPassword').value;
-  const group = $('#regGroup').value
+  var group = $('regGroup').value.trim().toUpperCase();
+  var VALID_GROUPS = ['A', 'B', 'C', 'D', 'E'];
   if (!username || !password) {
     $('regError').textContent = '用户名和密码不能为空';
+    $('regError').style.display = 'block';
+    return;
+  }
+  if (!group || VALID_GROUPS.indexOf(group) === -1) {
+    $('regError').textContent = '请选择有效分组（A/B/C/D/E）';
     $('regError').style.display = 'block';
     return;
   }
@@ -1083,6 +1120,7 @@ function renderFeedbackSystem() {
   setupNavTabs();
   $('headerUsername').textContent = currentUser();
   $('headerRole').textContent = currentRole();
+  if ($('headerGroup')) $('headerGroup').textContent = currentGroup();
   initStatusFilter();
   DocIntegration.initFeedbackDocSelector();
   loadFeedbacks();
@@ -1251,8 +1289,17 @@ function loadFeedbacks() {
 
 function renderFilterButtons() {
   var authors = [];
+  var user = currentUser();
+  var role = currentRole();
+  var userGroup = currentGroup();
   allFeedbacksCache.forEach(function (fb) {
-    if (authors.indexOf(fb.author) === -1) authors.push(fb.author);
+    if (authors.indexOf(fb.author) === -1) {
+      if (role === 'admin') {
+        authors.push(fb.author);
+      } else if (fb.author === user || fb.group === userGroup) {
+        authors.push(fb.author);
+      }
+    }
   });
   var html = '<button class="filter-btn active" data-author="all">全部</button>';
   authors.forEach(function (a) {
@@ -1274,10 +1321,11 @@ function getVisibleFeedbacks() {
   var list = allFeedbacksCache;
   var user = currentUser();
   var role = currentRole();
-  var currentUserGroup = getUsers()[user]?.group;
+  var userGroup = currentGroup();
+
   if (role !== 'admin' || !adminViewMode) {
     list = list.filter(function (fb) {
-      return fb.author === user || fb.assigned_to === user || fb.original_author === user;
+      return fb.author === user || fb.assigned_to === user || fb.original_author === user || fb.group === userGroup;
     });
   }
 
@@ -1313,6 +1361,9 @@ function renderFeedbackList() {
     html += '<div class="feedback-header">';
     html += '<div>';
     html += '<span class="feedback-author">' + escapeHtml(fb.author) + '</span>';
+    if (fb.group) {
+      html += '<span class="group-badge">[' + escapeHtml(fb.group) + '组]</span>';
+    }
     if (fb.is_assigned_copy && fb.original_author) {
       html += '<span class="original-author-info">来自 ' + escapeHtml(fb.original_author) + '</span>';
     }
@@ -1600,7 +1651,7 @@ function submitFeedback() {
   var fb = {
     id: genShortId(),
     author: currentUser(),
-    author_group: getUsers()[currentUser()]?.group || null,
+    group: currentGroup(),
     content: content,
     images: selectedImages.slice(),
     docs: DocIntegration.getSelectedFeedbackDocs(),
@@ -1984,6 +2035,7 @@ function renderGalleryPage() {
   setupNavTabs();
   if ($('headerUsername2')) $('headerUsername2').textContent = currentUser();
   if ($('headerRole2')) $('headerRole2').textContent = currentRole();
+  if ($('headerGroup2')) $('headerGroup2').textContent = currentGroup();
   var images = getMetadata().sort(function (a, b) {
     return (b.upload_time || '') > (a.upload_time || '') ? 1 : -1;
   });
@@ -2239,23 +2291,45 @@ function deleteNotification(id) {
 }
 
 // ==================== 用户管理面板 ====================
+var adminUserSearch = '';
+var adminUserGroupFilter = 'all';
+
+function applyAdminUserFilters(users) {
+  var search = adminUserSearch.toLowerCase().trim();
+  var group = adminUserGroupFilter;
+  var filtered = {};
+  for (var username in users) {
+    if (search && username.toLowerCase().indexOf(search) === -1) continue;
+    if (group !== 'all' && users[username].group !== group) continue;
+    filtered[username] = users[username];
+  }
+  return filtered;
+}
+
 function renderAdminUserTable(targetEl) {
   if (!targetEl) return;
-  const users = getUsers();
+  const allUsers = getUsers();
+  const users = applyAdminUserFilters(allUsers);
   let html = '<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; background:white;table-layout:fixed;">';
-  html += '<colgroup><col style="width:20%"><col style="width:12%"><col style="width:28%"><col style="width:40%"></colgroup>';
-  html += '<thead><tr><th>用户名</th><th>角色</th><th>注册时间</th><th>操作</th></tr></thead><tbody>';
+  html += '<colgroup><col style="width:18%"><col style="width:10%"><col style="width:8%"><col style="width:24%"><col style="width:40%"></colgroup>';
+  html += '<thead><tr><th>用户名</th><th>角色</th><th>分组</th><th>注册时间</th><th>操作</th></tr></thead><tbody>';
 
+  var count = 0;
   for (const username in users) {
+    count++;
     const user = users[username];
-    html += '<tr><td>' + escapeHtml(username) + '</td><td>' + escapeHtml(user.role || 'user') + '</td><td>' + (user.created_at ? formatTime(user.created_at) : '-') + '</td><td>';
+    html += '<tr><td>' + escapeHtml(username) + '</td><td>' + escapeHtml(user.role || 'user') + '</td><td>' + escapeHtml(user.group || '-') + '</td><td>' + (user.created_at ? formatTime(user.created_at) : '-') + '</td><td>';
     if (username !== currentUser()) {
-      html += '<button class="admin-change-pwd-btn" data-username="' + escapeHtml(username) + '" style="margin-right:10px;">修改密码</button>';
+      html += '<button class="admin-change-pwd-btn" data-username="' + escapeHtml(username) + '" style="margin-right:6px;">修改密码</button>';
+      html += '<button class="admin-change-group-btn" data-username="' + escapeHtml(username) + '" style="margin-right:6px;">修改分组</button>';
       html += '<button class="admin-delete-user-btn" data-username="' + escapeHtml(username) + '">删除</button>';
     } else {
       html += '<em>当前用户</em>';
     }
     html += '</td></tr>';
+  }
+  if (!count) {
+    html += '<tr><td colspan="5" style="text-align:center;padding:32px;color:#94a3b8;">无匹配用户</td></tr>';
   }
   html += '</tbody></table></div>';
   targetEl.innerHTML = html;
@@ -2264,6 +2338,12 @@ function renderAdminUserTable(targetEl) {
     btn.onclick = async function (e) {
       e.stopPropagation();
       await changeUserPassword(btn.getAttribute('data-username'));
+    };
+  });
+  targetEl.querySelectorAll('.admin-change-group-btn').forEach(function (btn) {
+    btn.onclick = async function (e) {
+      e.stopPropagation();
+      await changeUserGroup(btn.getAttribute('data-username'));
     };
   });
   targetEl.querySelectorAll('.admin-delete-user-btn').forEach(function (btn) {
@@ -2322,6 +2402,35 @@ async function changeUserPassword(targetUsername) {
   saveUsers(users);
   await saveDataNow(STORAGE_KEYS.users, users);
   showToast('用户 ' + targetUsername + ' 密码已修改');
+  refreshUserManagement();
+}
+
+async function changeUserGroup(targetUsername) {
+  if (!(await verifyAdminPassword())) {
+    showToast('管理员密码错误，操作已取消', true);
+    return;
+  }
+  var newGroup = prompt('请输入用户 ' + targetUsername + ' 的新分组（A/B/C/D/E）：');
+  if (!newGroup) return;
+  newGroup = newGroup.trim().toUpperCase();
+  var VALID_GROUPS = ['A', 'B', 'C', 'D', 'E'];
+  if (VALID_GROUPS.indexOf(newGroup) === -1) {
+    showToast('无效分组，请输入 A/B/C/D/E', true);
+    return;
+  }
+  var users = getUsers();
+  if (!users[targetUsername]) {
+    showToast('用户不存在', true);
+    return;
+  }
+  users[targetUsername].group = newGroup;
+  saveUsers(users);
+  await saveDataNow(STORAGE_KEYS.users, users);
+  showToast('用户 ' + targetUsername + ' 分组已更新为 ' + newGroup);
+  if (targetUsername === currentUser()) {
+    var s = getSession();
+    if (s) { s.group = newGroup; setSession(s); }
+  }
   refreshUserManagement();
 }
 

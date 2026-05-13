@@ -47,6 +47,7 @@ body{font-family:'Segoe UI',Roboto,'Helvetica Neue',sans-serif;background:#f5f7f
 .feedback-item{background:#fff;border-radius:24px;padding:20px;box-shadow:0 4px 12px rgba(0,0,0,.05);border:1px solid #e9edf2}
 .feedback-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid #eef2f6;flex-wrap:wrap;gap:8px}
 .feedback-author{font-weight:600;color:#3b82f6}
+.group-badge{display:inline-block;margin-left:6px;background:#dbeafe;color:#1e40af;font-size:.7rem;padding:1px 8px;border-radius:20px;font-weight:500}
 .original-author-info{font-size:.7rem;color:#8b5cf6;background:#f3e8ff;padding:2px 8px;border-radius:20px;margin-left:8px}
 .feedback-time{font-size:.75rem;color:#94a3b8}
 .assigned-info{font-size:.7rem;background:#fef3c7;padding:2px 8px;border-radius:20px;color:#d97706}
@@ -176,6 +177,15 @@ footer{text-align:center;margin-top:48px;font-size:.75rem;color:#7e8c9e}
 .sidebar-icon{font-size:1.1rem;width:24px;text-align:center;flex-shrink:0}
 .admin-content{flex:1;min-width:0}
 .admin-module-title{margin:0 0 20px;color:#1f2d3d;font-size:1.15rem;font-weight:600}
+
+.admin-filter-bar{display:flex;align-items:center;gap:16px;margin-bottom:16px;flex-wrap:wrap}
+.admin-search-input{width:200px;padding:8px 16px;border:1px solid #cfdfed;border-radius:20px;font-size:.82rem;outline:none;transition:.2s}
+.admin-search-input:focus{border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,.15)}
+.admin-group-filters{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.filter-label-text{font-size:.78rem;color:#94a3b8;font-weight:500}
+.group-filter-btn{padding:5px 14px;border:1px solid #cfdfed;border-radius:20px;background:#fff;font-size:.75rem;color:#475569;cursor:pointer;transition:all .15s}
+.group-filter-btn:hover{border-color:#3b82f6;color:#3b82f6}
+.group-filter-btn.active{background:#3b82f6;color:#fff;border-color:#3b82f6}
 
 .cos-config-banner{background:#fef3c7;border:1px solid #fcd34d;border-radius:20px;padding:12px 18px;margin-bottom:20px;font-size:.8rem;color:#92400e;display:none}
 .cos-config-banner.show{display:block}
