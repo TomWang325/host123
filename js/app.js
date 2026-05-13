@@ -995,6 +995,7 @@ async function handleRegister(e) {
   e.preventDefault();
   var username = $('regUsername').value.trim();
   var password = $('regPassword').value;
+  const group = $('#regGroup').value
   if (!username || !password) {
     $('regError').textContent = '用户名和密码不能为空';
     $('regError').style.display = 'block';
@@ -1015,6 +1016,7 @@ async function handleRegister(e) {
   users[username] = {
     password: await hashPassword(password),
     role: role,
+    group: group,
     created_at: new Date().toISOString()
   };
   saveUsers(users);
