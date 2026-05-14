@@ -323,6 +323,32 @@
   </div>
 </div>
 
+<div id="docPreviewModal" class="doc-preview-modal">
+  <div class="doc-preview-panel">
+    <div class="doc-preview-header">
+      <div class="doc-preview-title" id="docPreviewTitle">文档预览</div>
+      <button class="doc-preview-close" id="closeDocPreviewBtn" type="button">&times;</button>
+    </div>
+    <div class="doc-preview-body">
+      <div class="doc-preview-loading" id="docPreviewLoading">正在生成预览...</div>
+      <div class="doc-preview-canvas" id="docPreviewCanvas">
+        <img class="doc-preview-img" id="docPreviewImg" alt="">
+      </div>
+    </div>
+    <div class="doc-preview-footer">
+      <button class="doc-preview-nav" id="docPreviewPrevBtn" type="button">上一页</button>
+      <span class="doc-preview-page" id="docPreviewPageInfo">第 1 页</span>
+      <button class="doc-preview-nav" id="docPreviewNextBtn" type="button">下一页</button>
+      <div class="doc-preview-zoom">
+        <button class="doc-preview-nav" id="docPreviewZoomOutBtn" type="button">缩小</button>
+        <span class="doc-preview-page" id="docPreviewZoomInfo">100%</span>
+        <button class="doc-preview-nav" id="docPreviewZoomInBtn" type="button">放大</button>
+        <button class="doc-preview-nav" id="docPreviewFitBtn" type="button">适应窗口</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div id="userPanelOverlay" class="user-panel-overlay">
   <div class="user-panel">
     <button class="user-panel-close" id="closeUserPanelBtn">&times;</button>
@@ -349,6 +375,16 @@
       <input type="password" id="newPassword2" placeholder="请再次输入新密码">
     </div>
     <button class="auth-btn" id="changePwdBtn">确认修改</button>
+  </div>
+</div>
+
+<div id="adminUserActionOverlay" class="user-panel-overlay">
+  <div class="user-panel admin-action-panel">
+    <button class="user-panel-close" id="closeAdminUserActionBtn">&times;</button>
+    <h2 id="adminUserActionTitle">用户操作</h2>
+    <div id="adminUserActionError" class="error-msg" style="display:none;margin-bottom:12px;"></div>
+    <div id="adminUserActionFields"></div>
+    <button class="auth-btn" id="adminUserActionSubmitBtn">确认</button>
   </div>
 </div>
 

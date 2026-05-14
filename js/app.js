@@ -499,7 +499,9 @@ function currentGroup() {
 
 // ==================== COS 上传模块 ====================
 var SIGNED_URL_CACHE = {};
+var DOC_PREVIEW_URL_CACHE = {};
 var SIGNED_URL_TTL = 6 * 24 * 60 * 60 * 1000;
+var docPreviewState = { storedName: '', originalName: '', page: 1, zoom: 1 };
 
 function getCosRawUrl(key) {
   if (COS_CONFIG.baseUrl) return COS_CONFIG.baseUrl.replace(/\/$/, '') + '/' + key;
@@ -620,6 +622,137 @@ function ensureSignedUrl(key, originalName) {
       });
     }
   });
+}
+
+function isDocPreviewable(filename) {
+  var ext = (filename || '').split('.').pop().toLowerCase();
+  return ['doc', 'docx', 'pdf', 'ppt', 'pptx', 'xls', 'xlsx', 'txt'].indexOf(ext) !== -1;
+}
+
+function generateDocPreviewUrl(key, page) {
+  return new Promise(function (resolve, reject) {
+    var cos = getCosClient();
+    if (!cos) {
+      reject(new Error('COS未配置，无法使用万象文档预览'));
+      return;
+    }
+    cos.getObjectUrl({
+      Bucket: COS_CONFIG.Bucket,
+      Region: COS_CONFIG.Region,
+      Key: key,
+      Sign: true,
+      Expires: 3600,
+      Query: {
+        'ci-process': 'doc-preview',
+        page: String(page || 1),
+        dstType: 'jpg'
+      }
+    }, function (err, data) {
+      if (err) reject(err);
+      else resolve(data.Url);
+    });
+  });
+}
+
+function ensureDocPreviewUrl(key, page) {
+  var cacheKey = key + '#doc-preview#' + page;
+  var cached = DOC_PREVIEW_URL_CACHE[cacheKey];
+  if (cached && (Date.now() - cached.time) < 55 * 60 * 1000) {
+    return Promise.resolve(cached.url);
+  }
+  return generateDocPreviewUrl(key, page).then(function (url) {
+    DOC_PREVIEW_URL_CACHE[cacheKey] = { url: url, time: Date.now() };
+    return url;
+  });
+}
+
+async function openDocPreview(storedName, originalName) {
+  if (!isDocPreviewable(originalName || storedName)) {
+    showToast('该文档类型暂不支持图片预览', true);
+    return;
+  }
+  docPreviewState = { storedName: storedName, originalName: originalName || storedName, page: 1, zoom: 1 };
+  if ($('docPreviewTitle')) $('docPreviewTitle').textContent = docPreviewState.originalName;
+  if ($('docPreviewModal')) $('docPreviewModal').classList.add('show');
+  updateDocPreviewZoom();
+  await loadDocPreviewPage(1);
+}
+
+function updateDocPreviewZoom() {
+  var img = $('docPreviewImg');
+  var canvas = $('docPreviewCanvas');
+  var body = document.querySelector('.doc-preview-body');
+  var zoom = docPreviewState.zoom || 1;
+  if (img) {
+    img.style.width = (zoom * 100) + '%';
+    img.style.height = 'auto';
+  }
+  if (canvas) canvas.classList.toggle('zoomed', zoom > 1);
+  if (body && zoom > 1) body.scrollLeft = 0;
+  if ($('docPreviewZoomInfo')) $('docPreviewZoomInfo').textContent = Math.round(zoom * 100) + '%';
+  if ($('docPreviewZoomOutBtn')) $('docPreviewZoomOutBtn').disabled = zoom <= 0.25;
+  if ($('docPreviewZoomInBtn')) $('docPreviewZoomInBtn').disabled = zoom >= 3;
+}
+
+function setDocPreviewZoom(zoom) {
+  docPreviewState.zoom = Math.max(0.25, Math.min(3, zoom));
+  updateDocPreviewZoom();
+}
+
+async function loadDocPreviewPage(page) {
+  if (!docPreviewState.storedName) return;
+  if (page < 1) page = 1;
+  var img = $('docPreviewImg');
+  var loading = $('docPreviewLoading');
+  var prevBtn = $('docPreviewPrevBtn');
+  var nextBtn = $('docPreviewNextBtn');
+  if (loading) {
+    loading.textContent = '正在生成预览...';
+    loading.style.display = 'block';
+  }
+  if (img) {
+    img.style.display = 'none';
+    img.removeAttribute('src');
+  }
+  if (prevBtn) prevBtn.disabled = page <= 1;
+  if (nextBtn) nextBtn.disabled = true;
+  if ($('docPreviewPageInfo')) $('docPreviewPageInfo').textContent = '第 ' + page + ' 页';
+
+  try {
+    var url = await ensureDocPreviewUrl(docPreviewState.storedName, page);
+    if (!img) return;
+    img.onload = function () {
+      docPreviewState.page = page;
+      if (loading) loading.style.display = 'none';
+      updateDocPreviewZoom();
+      img.style.display = 'block';
+      if (prevBtn) prevBtn.disabled = page <= 1;
+      if (nextBtn) nextBtn.disabled = false;
+      if ($('docPreviewPageInfo')) $('docPreviewPageInfo').textContent = '第 ' + page + ' 页';
+    };
+    img.onerror = function () {
+      if (loading) {
+        loading.textContent = page > docPreviewState.page ? '已经到最后一页，或该页暂不可预览' : '预览加载失败';
+        loading.style.display = 'block';
+      }
+      if (prevBtn) prevBtn.disabled = docPreviewState.page <= 1;
+      if (nextBtn) nextBtn.disabled = false;
+      if ($('docPreviewPageInfo')) $('docPreviewPageInfo').textContent = '第 ' + docPreviewState.page + ' 页';
+    };
+    img.src = url;
+  } catch (err) {
+    if (loading) {
+      loading.textContent = '预览失败：' + (err.message || '请确认已开通数据万象文档预览');
+      loading.style.display = 'block';
+    }
+    if (nextBtn) nextBtn.disabled = false;
+    showToast('预览失败：' + (err.message || '万象服务不可用'), true);
+  }
+}
+
+function closeDocPreview() {
+  if ($('docPreviewModal')) $('docPreviewModal').classList.remove('show');
+  if ($('docPreviewImg')) $('docPreviewImg').removeAttribute('src');
 }
 
 function deleteCosFile(storedName) {
@@ -894,6 +1027,7 @@ function renderDocList(docs) {
         <div class="img-name" title="${escapeHtml(doc.original_name)}">${escapeHtml(doc.original_name)}</div>
         <div class="img-meta"><span>${escapeHtml(doc.uploader)}</span><span>${formatSize(doc.file_size)}</span></div>
         <div class="card-actions">
+          ${isDocPreviewable(doc.original_name) ? `<button class="preview-doc-btn" data-stored="${doc.stored_name}" data-name="${escapeHtml(doc.original_name)}" type="button">预览</button>` : ''}
           <span class="download-doc-btn" data-stored="${doc.stored_name}" data-name="${escapeHtml(doc.original_name)}" style="background:#eef2ff;border:none;flex:1;padding:6px;border-radius:40px;font-size:.7rem;cursor:pointer;color:#3b82f6;display:flex;align-items:center;justify-content:center;gap:4px;">下载</span>
           ${canDelete ? `<button class="delete-doc-btn" data-stored="${doc.stored_name}" style="background:#ef4444;color:#fff;border:none;flex:1;padding:6px;border-radius:40px;font-size:.7rem;cursor:pointer;">删除</button>` : ''}
         </div>
@@ -901,6 +1035,15 @@ function renderDocList(docs) {
     </div>`;
   });
   container.innerHTML = html;
+
+  container.querySelectorAll('.preview-doc-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      var storedName = btn.getAttribute('data-stored');
+      var originalName = btn.getAttribute('data-name');
+      openDocPreview(storedName, originalName);
+    });
+  });
 
   container.querySelectorAll('.download-doc-btn').forEach(btn => {
     btn.addEventListener('click', async (e) => {
@@ -1195,7 +1338,8 @@ function renderExistingImages() {
     html += `<div class="existing-image-item${isSelected ? ' selected' : ''}" data-stored="${img.stored_name}" style="position:relative;">
       <img src="${imgUrl}" alt="${escapeHtml(img.original_name)}" loading="lazy" 
         onerror="this.onerror=null;this.src=this.src+'?retry='+Date.now();this.parentNode.querySelector('.img-placeholder').style.display='flex';">
-      <div class="img-placeholder" style="display:none;width:80px;height:80px;align-items:center;justify-content:center;background:#e2e8f0;border-radius:10px;color:#94a3b8;font-size:10px;">加载失败</div>
+      <div class="img-placeholder" style="display:none;width:100%;height:80px;align-items:center;justify-content:center;background:#e2e8f0;border-radius:10px;color:#94a3b8;font-size:10px;">加载失败</div>
+      <div class="existing-image-name" title="${escapeHtml(img.original_name)}">${escapeHtml(img.original_name)}</div>
       ${isSelected ? '<span class="remove-icon" style="position:absolute;top:2px;right:2px;background:rgba(0,0,0,.6);color:#fff;border-radius:50%;width:18px;height:18px;display:flex;align-items:center;justify-content:center;font-size:12px;cursor:pointer;">✕</span>' : ''}
     </div>`;
   });
@@ -1415,7 +1559,8 @@ function renderFeedbackList() {
         var url = meta ? getImageUrl(meta) : '';
         if (!url && (imgName.startsWith('http') || imgName.startsWith('data:'))) url = imgName;
         if (url) {
-          html += '<img class="feedback-img" data-stored="' + imgName + '" src="' + url + '" onclick="openImageModal(this)" loading="lazy" onerror="this.onerror=null;this.src=this.src+\'?retry=\'+Date.now();">';
+          var displayName = meta ? meta.original_name : imgName;
+          html += '<div class="feedback-image-item"><img class="feedback-img" data-stored="' + imgName + '" src="' + url + '" onclick="openImageModal(this)" loading="lazy" onerror="this.onerror=null;this.src=this.src+\'?retry=\'+Date.now();"><div class="feedback-image-name" title="' + escapeHtml(displayName) + '">' + escapeHtml(displayName) + '</div></div>';
         }
       });
       html += '</div>';
@@ -1458,7 +1603,10 @@ function renderFeedbackList() {
           var meta = allImagesCache.find(function (m) { return m.stored_name === imgName; });
           var url = meta ? getImageUrl(meta) : '';
           if (!url && (imgName.startsWith('http') || imgName.startsWith('data:'))) url = imgName;
-          if (url) html += '<img class="comment-img" data-stored="' + imgName + '" src="' + url + '" onclick="openImageModal(this)" onerror="this.onerror=null;this.src=this.src+\'?retry=\'+Date.now();">';
+          if (url) {
+            var displayName = meta ? meta.original_name : imgName;
+            html += '<div class="comment-image-item"><img class="comment-img" data-stored="' + imgName + '" src="' + url + '" onclick="openImageModal(this)" onerror="this.onerror=null;this.src=this.src+\'?retry=\'+Date.now();"><div class="comment-image-name" title="' + escapeHtml(displayName) + '">' + escapeHtml(displayName) + '</div></div>';
+          }
         });
         html += '</div>';
       }
@@ -1467,7 +1615,7 @@ function renderFeedbackList() {
         c.docs.forEach(docStored => {
           const docMeta = getDocuments().find(d => d.stored_name === docStored);
           if (docMeta) {
-            html += `<div class="doc-link" style="display:inline-block; margin-right:12px;">📄 <span class="download-comment-doc" style="cursor:pointer; color:#3b82f6; text-decoration:underline;" data-stored="${docStored}" data-name="${escapeHtml(docMeta.original_name)}">${escapeHtml(docMeta.original_name)}</span></div>`;
+            html += `<div class="doc-link" style="display:inline-block; margin-right:12px;">📄 <span class="download-comment-doc" style="cursor:pointer; color:#3b82f6; text-decoration:underline;" data-stored="${docStored}" data-name="${escapeHtml(docMeta.original_name)}">${escapeHtml(docMeta.original_name)}</span>${isDocPreviewable(docMeta.original_name) ? `<span class="preview-inline-doc preview-comment-doc" data-stored="${docStored}" data-name="${escapeHtml(docMeta.original_name)}">预览</span>` : ''}</div>`;
           }
         });
         html += '</div>';
@@ -1525,6 +1673,15 @@ function renderFeedbackList() {
       }
     });
   });
+
+  container.querySelectorAll('.preview-feedback-doc').forEach(link => {
+    link.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const stored = link.getAttribute('data-stored');
+      const originalName = link.getAttribute('data-name');
+      openDocPreview(stored, originalName);
+    });
+  });
   
   // 绑定评论文档下载
   container.querySelectorAll('.download-comment-doc').forEach(link => {
@@ -1538,6 +1695,15 @@ function renderFeedbackList() {
       } catch (err) {
         showToast('下载失败：' + err.message, true);
       }
+    });
+  });
+
+  container.querySelectorAll('.preview-comment-doc').forEach(link => {
+    link.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const stored = link.getAttribute('data-stored');
+      const originalName = link.getAttribute('data-name');
+      openDocPreview(stored, originalName);
     });
   });
   
@@ -2038,7 +2204,7 @@ const DocIntegration = (function() {
       docStoredNames.forEach(stored => {
         const docMeta = getDocuments().find(d => d.stored_name === stored);
         if (docMeta) {
-          html += `<div class="doc-link" style="display:inline-block; margin-right:12px;">📄 <a href="#" class="download-feedback-doc" data-stored="${stored}" data-name="${escapeHtml(docMeta.original_name)}">${escapeHtml(docMeta.original_name)}</a></div>`;
+          html += `<div class="doc-link" style="display:inline-block; margin-right:12px;">📄 <a href="#" class="download-feedback-doc" data-stored="${stored}" data-name="${escapeHtml(docMeta.original_name)}">${escapeHtml(docMeta.original_name)}</a>${isDocPreviewable(docMeta.original_name) ? `<span class="preview-inline-doc preview-feedback-doc" data-stored="${stored}" data-name="${escapeHtml(docMeta.original_name)}">预览</span>` : ''}</div>`;
         } else {
           html += `<div class="doc-link" style="display:inline-block; margin-right:12px;">📄 未知文档</div>`;
         }
@@ -2314,6 +2480,10 @@ function deleteNotification(id) {
 // ==================== 用户管理面板 ====================
 var adminUserSearch = '';
 var adminUserGroupFilter = 'all';
+var adminUserActionState = {
+  mode: '',
+  targetUsername: ''
+};
 
 function applyAdminUserFilters(users) {
   var search = adminUserSearch.toLowerCase().trim();
@@ -2341,9 +2511,11 @@ function renderAdminUserTable(targetEl) {
     const user = users[username];
     html += '<tr><td>' + escapeHtml(username) + '</td><td>' + escapeHtml(user.role || 'user') + '</td><td>' + escapeHtml(user.group || '-') + '</td><td>' + (user.created_at ? formatTime(user.created_at) : '-') + '</td><td>';
     if (username !== currentUser()) {
-      html += '<button class="admin-change-pwd-btn" data-username="' + escapeHtml(username) + '" style="margin-right:6px;">修改密码</button>';
-      html += '<button class="admin-change-group-btn" data-username="' + escapeHtml(username) + '" style="margin-right:6px;">修改分组</button>';
-      html += '<button class="admin-delete-user-btn" data-username="' + escapeHtml(username) + '">删除</button>';
+      html += '<div class="admin-user-actions">';
+      html += '<button class="admin-action-btn admin-change-pwd-btn" data-username="' + escapeHtml(username) + '">修改密码</button>';
+      html += '<button class="admin-action-btn admin-change-group-btn" data-username="' + escapeHtml(username) + '">修改分组</button>';
+      html += '<button class="admin-action-btn admin-delete-user-btn" data-username="' + escapeHtml(username) + '">删除</button>';
+      html += '</div>';
     } else {
       html += '<em>当前用户</em>';
     }
@@ -2356,24 +2528,21 @@ function renderAdminUserTable(targetEl) {
   targetEl.innerHTML = html;
 
   targetEl.querySelectorAll('.admin-change-pwd-btn').forEach(function (btn) {
-    btn.onclick = async function (e) {
+    btn.onclick = function (e) {
       e.stopPropagation();
-      await changeUserPassword(btn.getAttribute('data-username'));
+      changeUserPassword(btn.getAttribute('data-username'));
     };
   });
   targetEl.querySelectorAll('.admin-change-group-btn').forEach(function (btn) {
-    btn.onclick = async function (e) {
+    btn.onclick = function (e) {
       e.stopPropagation();
-      await changeUserGroup(btn.getAttribute('data-username'));
+      changeUserGroup(btn.getAttribute('data-username'));
     };
   });
   targetEl.querySelectorAll('.admin-delete-user-btn').forEach(function (btn) {
-    btn.onclick = async function (e) {
+    btn.onclick = function (e) {
       e.stopPropagation();
-      var username = btn.getAttribute('data-username');
-      if (confirm('确定要永久删除用户 ' + username + ' 吗？')) {
-        await deleteUser(username);
-      }
+      deleteUser(btn.getAttribute('data-username'));
     };
   });
 }
@@ -2393,8 +2562,7 @@ async function showUserPanel() {
   renderAdminUserTable($('userPanelBody'));
   $('userPanelOverlay').classList.add('show');
 }
-async function verifyAdminPassword() {
-  const pwd = prompt('请输入您的管理员密码以继续操作：');
+async function verifyAdminPasswordValue(pwd) {
   if (!pwd) return false;
   const currentAdmin = currentUser();
   const users = getUsers();
@@ -2403,73 +2571,124 @@ async function verifyAdminPassword() {
   const inputHash = await hashPassword(pwd);
   return inputHash === adminHash;
 }
-async function changeUserPassword(targetUsername) {
-  if (!(await verifyAdminPassword())) {
-    showToast('管理员密码错误，操作已取消', true);
-    return;
-  }
-  const newPassword = prompt(`请输入用户 ${targetUsername} 的新密码：`);
-  if (!newPassword) return;
-  if (newPassword.length < 3) {
-    showToast('密码长度至少3个字符', true);
-    return;
-  }
-  const users = getUsers();
-  if (!users[targetUsername]) {
+
+function showAdminUserActionPanel(mode, targetUsername) {
+  var users = getUsers();
+  var user = users[targetUsername];
+  if (!user) {
     showToast('用户不存在', true);
     return;
   }
-  users[targetUsername].password = await hashPassword(newPassword);
-  saveUsers(users);
-  await saveDataNow(STORAGE_KEYS.users, users);
-  showToast('用户 ' + targetUsername + ' 密码已修改');
-  refreshUserManagement();
+  adminUserActionState.mode = mode;
+  adminUserActionState.targetUsername = targetUsername;
+  $('adminUserActionError').style.display = 'none';
+  $('adminUserActionError').textContent = '';
+  $('adminUserActionSubmitBtn').classList.toggle('danger', mode === 'delete');
+
+  var currentGroup = user.group || '-';
+  var fields = '';
+  if (mode === 'password') {
+    $('adminUserActionTitle').textContent = '修改用户密码';
+    $('adminUserActionSubmitBtn').textContent = '确认修改密码';
+    fields += '<div class="input-group"><label>修改用户的用户名</label><input type="text" value="' + escapeHtml(targetUsername) + '" readonly></div>';
+    fields += '<div class="input-group"><label>修改后目标密码</label><input type="password" id="adminTargetPassword" placeholder="请输入新密码"></div>';
+    fields += '<div class="input-group"><label>管理员密码安全验证</label><input type="password" id="adminVerifyPassword" placeholder="请输入管理员密码"></div>';
+  } else if (mode === 'group') {
+    $('adminUserActionTitle').textContent = '修改用户分组';
+    $('adminUserActionSubmitBtn').textContent = '确认修改分组';
+    fields += '<div class="input-group"><label>修改用户的用户名</label><input type="text" value="' + escapeHtml(targetUsername) + '" readonly></div>';
+    fields += '<div class="input-group"><label>当前所在分组</label><input type="text" value="' + escapeHtml(currentGroup) + '" readonly></div>';
+    fields += '<div class="input-group"><label>目标分组选择</label><select id="adminTargetGroup">';
+    ['A', 'B', 'C', 'D', 'E'].forEach(function (group) {
+      fields += '<option value="' + group + '"' + (user.group === group ? ' selected' : '') + '>' + group + '组</option>';
+    });
+    fields += '</select></div>';
+    fields += '<div class="input-group"><label>管理员密码验证</label><input type="password" id="adminVerifyPassword" placeholder="请输入管理员密码"></div>';
+  } else if (mode === 'delete') {
+    $('adminUserActionTitle').textContent = '删除用户';
+    $('adminUserActionSubmitBtn').textContent = '确认删除用户';
+    fields += '<div class="admin-action-hint">删除后该用户将无法继续登录，此操作不可撤销。请确认用户名与分组信息后输入管理员密码。</div>';
+    fields += '<div class="input-group"><label>修改用户的用户名</label><input type="text" value="' + escapeHtml(targetUsername) + '" readonly></div>';
+    fields += '<div class="input-group"><label>当前所在分组</label><input type="text" value="' + escapeHtml(currentGroup) + '" readonly></div>';
+    fields += '<div class="input-group"><label>管理员密码验证</label><input type="password" id="adminVerifyPassword" placeholder="请输入管理员密码"></div>';
+  }
+  $('adminUserActionFields').innerHTML = fields;
+  $('adminUserActionOverlay').classList.add('show');
 }
 
-async function changeUserGroup(targetUsername) {
-  if (!(await verifyAdminPassword())) {
-    showToast('管理员密码错误，操作已取消', true);
+function hideAdminUserActionPanel() {
+  $('adminUserActionOverlay').classList.remove('show');
+}
+
+function showAdminUserActionError(message) {
+  $('adminUserActionError').textContent = message;
+  $('adminUserActionError').style.display = 'block';
+}
+
+async function submitAdminUserAction() {
+  var mode = adminUserActionState.mode;
+  var targetUsername = adminUserActionState.targetUsername;
+  var adminPassword = $('adminVerifyPassword') ? $('adminVerifyPassword').value : '';
+  if (!adminPassword) {
+    showAdminUserActionError('请输入管理员密码');
     return;
   }
-  var newGroup = prompt('请输入用户 ' + targetUsername + ' 的新分组（A/B/C/D/E）：');
-  if (!newGroup) return;
-  newGroup = newGroup.trim().toUpperCase();
-  var VALID_GROUPS = ['A', 'B', 'C', 'D', 'E'];
-  if (VALID_GROUPS.indexOf(newGroup) === -1) {
-    showToast('无效分组，请输入 A/B/C/D/E', true);
+  if (!(await verifyAdminPasswordValue(adminPassword))) {
+    showAdminUserActionError('管理员密码错误，操作已取消');
     return;
   }
   var users = getUsers();
   if (!users[targetUsername]) {
-    showToast('用户不存在', true);
+    showAdminUserActionError('用户不存在');
     return;
   }
-  users[targetUsername].group = newGroup;
+  if (mode === 'password') {
+    var newPassword = $('adminTargetPassword') ? $('adminTargetPassword').value : '';
+    if (!newPassword) {
+      showAdminUserActionError('请输入修改后的目标密码');
+      return;
+    }
+    if (newPassword.length < 3) {
+      showAdminUserActionError('密码长度至少3个字符');
+      return;
+    }
+    users[targetUsername].password = await hashPassword(newPassword);
+    showToast('用户 ' + targetUsername + ' 密码已修改');
+  } else if (mode === 'group') {
+    var newGroup = $('adminTargetGroup') ? $('adminTargetGroup').value : '';
+    if (['A', 'B', 'C', 'D', 'E'].indexOf(newGroup) === -1) {
+      showAdminUserActionError('请选择有效分组');
+      return;
+    }
+    users[targetUsername].group = newGroup;
+    showToast('用户 ' + targetUsername + ' 分组已更新为 ' + newGroup);
+    if (targetUsername === currentUser()) {
+      var s = getSession();
+      if (s) { s.group = newGroup; setSession(s); }
+    }
+  } else if (mode === 'delete') {
+    delete users[targetUsername];
+    showToast('用户 ' + targetUsername + ' 已删除');
+  } else {
+    showAdminUserActionError('未知操作类型');
+    return;
+  }
   saveUsers(users);
   await saveDataNow(STORAGE_KEYS.users, users);
-  showToast('用户 ' + targetUsername + ' 分组已更新为 ' + newGroup);
-  if (targetUsername === currentUser()) {
-    var s = getSession();
-    if (s) { s.group = newGroup; setSession(s); }
-  }
+  hideAdminUserActionPanel();
   refreshUserManagement();
 }
 
-async function deleteUser(targetUsername) {
-  if (!(await verifyAdminPassword())) {
-    showToast('管理员密码错误，操作已取消', true);
-    return;
-  }
-  if (!confirm(`确定要永久删除用户 ${targetUsername} 吗？此操作不可撤销。`)) return;
-  const users = getUsers();
-  delete users[targetUsername];
-  saveUsers(users);
-  await saveDataNow(STORAGE_KEYS.users, users);
-  showToast('用户 ' + targetUsername + ' 已删除');
-  refreshUserManagement();
-  if (targetUsername === currentUser()) {
-    handleLogout();
-  }
+function changeUserPassword(targetUsername) {
+  showAdminUserActionPanel('password', targetUsername);
+}
+
+function changeUserGroup(targetUsername) {
+  showAdminUserActionPanel('group', targetUsername);
+}
+
+function deleteUser(targetUsername) {
+  showAdminUserActionPanel('delete', targetUsername);
 }
 function hideUserPanel() {
   $('userPanelOverlay').classList.remove('show');
@@ -2599,11 +2818,35 @@ function bindGlobalEvents() {
   $('imageModal').addEventListener('click', function (e) {
     if (e.target === this) this.style.display = 'none';
   });
+  if ($('closeDocPreviewBtn')) $('closeDocPreviewBtn').addEventListener('click', closeDocPreview);
+  if ($('docPreviewModal')) $('docPreviewModal').addEventListener('click', function (e) {
+    if (e.target === this) closeDocPreview();
+  });
+  if ($('docPreviewPrevBtn')) $('docPreviewPrevBtn').addEventListener('click', function () {
+    loadDocPreviewPage(docPreviewState.page - 1);
+  });
+  if ($('docPreviewNextBtn')) $('docPreviewNextBtn').addEventListener('click', function () {
+    loadDocPreviewPage(docPreviewState.page + 1);
+  });
+  if ($('docPreviewZoomOutBtn')) $('docPreviewZoomOutBtn').addEventListener('click', function () {
+    setDocPreviewZoom((docPreviewState.zoom || 1) - 0.25);
+  });
+  if ($('docPreviewZoomInBtn')) $('docPreviewZoomInBtn').addEventListener('click', function () {
+    setDocPreviewZoom((docPreviewState.zoom || 1) + 0.25);
+  });
+  if ($('docPreviewFitBtn')) $('docPreviewFitBtn').addEventListener('click', function () {
+    setDocPreviewZoom(1);
+  });
 
   $('closeUserPanelBtn').addEventListener('click', hideUserPanel);
   $('userPanelOverlay').addEventListener('click', function (e) {
     if (e.target === this) hideUserPanel();
   });
+  $('closeAdminUserActionBtn').addEventListener('click', hideAdminUserActionPanel);
+  $('adminUserActionOverlay').addEventListener('click', function (e) {
+    if (e.target === this) hideAdminUserActionPanel();
+  });
+  $('adminUserActionSubmitBtn').addEventListener('click', submitAdminUserAction);
 
   $('changePwdLink').addEventListener('click', function (e) { e.preventDefault(); showPwdPanel(); });
   if ($('changePwdLink2')) $('changePwdLink2').addEventListener('click', function (e) { e.preventDefault(); showPwdPanel(); });
