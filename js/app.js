@@ -33,7 +33,13 @@ function setupCos(id, key, bucket, region) {
   saveCosConfig(COS_CONFIG);
   if ($('cosConfigBanner')) $('cosConfigBanner').classList.remove('show');
   if ($('cosConfigBanner2')) $('cosConfigBanner2').classList.remove('show');
-  if ($('cosSetupLink')) $('cosSetupLink').style.display = 'none';
+
+  const cosLink = $('#cosSetupLink');
+  if (cosLink){
+    cosLink.textContent = '修改COS配置';
+    cosLink.style.display = 'inline';
+  }
+
   showToast('COS配置已保存');
   setTimeout(function(){ location.reload(); }, 1000);
 }
@@ -500,7 +506,7 @@ function getCosRawUrl(key) {
   return 'https://' + COS_CONFIG.Bucket + '.cos.' + COS_CONFIG.Region + '.myqcloud.com/' + key;
 }
 
-function generateSignedUrl(key) {
+function generateSignedUrl(key,originalName = null) {
   return new Promise(function (resolve) {
     var cos = getCosClient();
     if (!cos) { resolve(getCosRawUrl(key)); return; }
@@ -513,7 +519,12 @@ function generateSignedUrl(key) {
     var queryParams = {};
     if (isImage) {
       queryParams = { 'imageMogr2/auto-orient': '' };  // 或者 thumbnail/100p
-    }
+    }else if (originalName) {
+        var encodedName = encodeURIComponent(originalName).replace(/[!'()*]/g, function(c){
+          return '%' + c.charCodeAt(0).toString(16).toUpperCase();
+        });
+        queryParams['response-content-disposition'] = `attachment; filename="${encodeURIComponent(originalName)}"; filename*=UTF-8''${encodedName}`;
+      }
     
     cos.getObjectUrl({
       Bucket: COS_CONFIG.Bucket,
@@ -596,20 +607,21 @@ function refreshAllImageUrls() {
   }
 }
 
-function ensureSignedUrl(key) {
+function ensureSignedUrl(key, originalName) {
   return new Promise(function (resolve) {
     if (!getCosClient()) { resolve(getCosRawUrl(key)); return; }
     var cached = SIGNED_URL_CACHE[key];
     if (cached && (Date.now() - cached.time) < SIGNED_URL_TTL) {
       resolve(cached.url);
     } else {
-      generateSignedUrl(key).then(function (signed) {
+      generateSignedUrl(key, originalName).then(function (signed) {
         SIGNED_URL_CACHE[key] = { url: signed, time: Date.now() };
         resolve(signed);
       });
     }
   });
 }
+
 function deleteCosFile(storedName) {
   return new Promise((resolve, reject) => {
     var cos = getCosClient();
@@ -895,7 +907,7 @@ function renderDocList(docs) {
       e.stopPropagation();
       var storedName = btn.getAttribute('data-stored');
       var originalName = btn.getAttribute('data-name');
-      var url = await ensureSignedUrl(storedName);
+      var url = await ensureSignedUrl(storedName,originalName);
       downloadFile(url, originalName);
     });
   });
@@ -928,7 +940,7 @@ function getFileIcon(filename) {
 function downloadFile(url, filename) {
   var a = document.createElement('a');
   a.href = url;
-  a.download = filename;
+  // a.download = filename;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -1488,7 +1500,7 @@ function renderFeedbackList() {
       const stored = link.getAttribute('data-stored');
       const name = link.getAttribute('data-name');
       try {
-        const url = await ensureSignedUrl(stored);
+        const url = await ensureSignedUrl(store,originalName);
         downloadFile(url, name);
       } catch (err) {
         showToast('下载失败：' + err.message, true);
@@ -1503,7 +1515,7 @@ function renderFeedbackList() {
       const stored = link.getAttribute('data-stored');
       const name = link.getAttribute('data-name');
       try {
-        const url = await ensureSignedUrl(stored);
+        const url = await ensureSignedUrl(stored,originalName);
         downloadFile(url, name);
       } catch (err) {
         showToast('下载失败：' + err.message, true);
@@ -2024,9 +2036,6 @@ const DocIntegration = (function() {
     },
   };
 })();
-
-
-
 
 
 
@@ -2644,6 +2653,12 @@ async function initApp() {
     if ($('cosConfigBanner')) $('cosConfigBanner').classList.add('show');
     if ($('cosConfigBanner2')) $('cosConfigBanner2').classList.add('show');
     if ($('cosSetupLink')) $('cosSetupLink').style.display = 'inline';
+  } else {
+    // 已配置：显示修改链接
+    if ($('cosSetupLink')) {
+      $('cosSetupLink').textContent = '修改COS配置';
+      $('cosSetupLink').style.display = 'inline';
+    }
   }
 
   bindGlobalEvents();
