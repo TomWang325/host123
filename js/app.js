@@ -1498,10 +1498,10 @@ function renderFeedbackList() {
     link.addEventListener('click', async (e) => {
       e.preventDefault();  // 虽然不是 <a> 但保留无害
       const stored = link.getAttribute('data-stored');
-      const name = link.getAttribute('data-name');
+      const originalName = link.getAttribute('data-name');
       try {
-        const url = await ensureSignedUrl(store,originalName);
-        downloadFile(url, name);
+        const url = await ensureSignedUrl(stored,originalName);
+        downloadFile(url, originalName);
       } catch (err) {
         showToast('下载失败：' + err.message, true);
       }
@@ -1513,10 +1513,10 @@ function renderFeedbackList() {
     link.addEventListener('click', async (e) => {
       e.preventDefault();
       const stored = link.getAttribute('data-stored');
-      const name = link.getAttribute('data-name');
+      const originalName = link.getAttribute('data-name');
       try {
         const url = await ensureSignedUrl(stored,originalName);
-        downloadFile(url, name);
+        downloadFile(url, originalName);
       } catch (err) {
         showToast('下载失败：' + err.message, true);
       }
