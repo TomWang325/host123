@@ -34,7 +34,7 @@ function setupCos(id, key, bucket, region) {
   if ($('cosConfigBanner')) $('cosConfigBanner').classList.remove('show');
   if ($('cosConfigBanner2')) $('cosConfigBanner2').classList.remove('show');
 
-  const cosLink = $('#cosSetupLink');
+  const cosLink = $('cosSetupLink');
   if (cosLink){
     cosLink.textContent = '修改COS配置';
     cosLink.style.display = 'inline';
@@ -1125,7 +1125,6 @@ var allImagesCache = [];
 var allFeedbacksCache = [];
 var currentFilter = 'all';
 var currentStatusFilter = 'all';
-var adminViewMode = false;
 var commentPendingImages = {};
 
 function renderFeedbackSystem() {
@@ -1139,11 +1138,6 @@ function renderFeedbackSystem() {
   loadImagesForFeedback();
   updateUnreadBadge();
 
-  if (currentRole() === 'admin') {
-    $('adminViewArea').style.display = 'flex';
-  } else {
-    $('adminViewArea').style.display = 'none';
-  }
 }
 
 function toggleDrawer() {
@@ -1300,29 +1294,44 @@ function loadFeedbacks() {
 }
 
 function renderFilterButtons() {
-  var authors = [];
-  var user = currentUser();
-  var role = currentRole();
-  var userGroup = currentGroup();
-  allFeedbacksCache.forEach(function (fb) {
-    if (authors.indexOf(fb.author) === -1) {
-      if (role === 'admin') {
-        authors.push(fb.author);
-      } else if (fb.author === user || fb.group === userGroup) {
-        authors.push(fb.author);
+  const role = currentRole();
+  let html = '';
+
+  if (role === 'admin') {
+    // 管理员：显示组筛选按钮
+    const groups = ['A', 'B', 'C', 'D', 'E'];
+    html += '<button class="filter-btn active" data-filter="all">全部</button>';
+    groups.forEach(g => {
+      html += `<button class="filter-btn" data-filter="${g}">${g}组</button>`;
+    });
+  } else {
+    // 普通用户：仍按作者列表动态生成（或也可改为组，根据需求）
+    const authors = [];
+    const user = currentUser();
+    const userGroup = currentGroup(); 
+    allFeedbacksCache.forEach(fb => {
+      // 只显示与当前用户相关的反馈的作者
+      if (fb.author === user || fb.group === userGroup) {
+        if (!authors.includes(fb.author)) authors.push(fb.author);
       }
-    }
-  });
-  var html = '<button class="filter-btn active" data-author="all">全部</button>';
-  authors.forEach(function (a) {
-    html += '<button class="filter-btn" data-author="' + a + '">' + escapeHtml(a) + '</button>';
-  });
+    });
+    html += '<button class="filter-btn active" data-author="all">全部</button>';
+    authors.forEach(a => {
+      html += `<button class="filter-btn" data-author="${a}">${escapeHtml(a)}</button>`;
+    });
+  }
+
   $('filterButtons').innerHTML = html;
 
-  $('filterButtons').querySelectorAll('.filter-btn').forEach(function (btn) {
+  // 绑定点击事件
+  $('filterButtons').querySelectorAll('.filter-btn').forEach(btn => {
     btn.addEventListener('click', function () {
-      currentFilter = this.getAttribute('data-author');
-      qsa('#filterButtons .filter-btn').forEach(function (b) { b.classList.remove('active'); });
+      if (role === 'admin') {
+        currentFilter = this.getAttribute('data-filter');   // 存储组名或'all'
+      } else {
+        currentFilter = this.getAttribute('data-author');   // 存储作者名
+      }
+      qsa('#filterButtons .filter-btn').forEach(b => b.classList.remove('active'));
       this.classList.add('active');
       renderFeedbackList();
     });
@@ -1330,23 +1339,32 @@ function renderFilterButtons() {
 }
 
 function getVisibleFeedbacks() {
-  var list = allFeedbacksCache;
-  var user = currentUser();
-  var role = currentRole();
-  var userGroup = currentGroup();
+  let list = allFeedbacksCache;
+  const user = currentUser();
+  const role = currentRole();
 
-  if (role !== 'admin' || !adminViewMode) {
-    list = list.filter(function (fb) {
-      return fb.author === user || fb.assigned_to === user || fb.original_author === user || fb.group === userGroup;
+  // 1. 基础权限：管理员看全部，普通用户只看到相关反馈
+  if (role !== 'admin') {
+    const userGroup = currentGroup();
+    list = list.filter(fb => {
+      return fb.author === user || fb.assigned_to === user || fb.original_author === user ||
+             (userGroup && fb.author_group === userGroup);
     });
   }
 
-  if (currentFilter !== 'all') {
-    list = list.filter(function (fb) { return fb.author === currentFilter; });
+  // 2. 组筛选（仅管理员且 currentFilter 不是 'all'）
+  if (role === 'admin' && currentFilter !== 'all') {
+    list = list.filter(fb => fb.author_group === currentFilter);
   }
 
+  // 3. 作者筛选（普通用户且 currentFilter 不是 'all'）
+  if (role !== 'admin' && currentFilter !== 'all') {
+    list = list.filter(fb => fb.author === currentFilter);
+  }
+
+  // 4. 状态筛选（不变）
   if (currentStatusFilter !== 'all') {
-    list = list.filter(function (fb) { return fb.status === currentStatusFilter; });
+    list = list.filter(fb => fb.status === currentStatusFilter);
   }
 
   return list;
@@ -1664,6 +1682,7 @@ function submitFeedback() {
     id: genShortId(),
     author: currentUser(),
     group: currentGroup(),
+    author_group:getUsers()[currentUser()]?.group || null,
     content: content,
     images: selectedImages.slice(),
     docs: DocIntegration.getSelectedFeedbackDocs(),
@@ -1762,6 +1781,7 @@ function assignFeedback(fbId, assignedTo) {
     id: genShortId(),
     author: assignedTo,
     original_author: source.author,
+    author_group: source.author_group,
     content: source.content,
     images: (source.images || []).slice(),
     status: 'pending',
@@ -1809,14 +1829,6 @@ function initStatusFilter() {
       renderFeedbackList();
     });
   });
-
-  var toggle = $('adminViewToggle');
-  if (toggle) {
-    toggle.addEventListener('change', function () {
-      adminViewMode = this.checked;
-      loadFeedbacks();
-    });
-  }
 }
 
 
