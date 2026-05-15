@@ -157,7 +157,7 @@
         <div class="upload-new-area" style="margin-top:12px;">
           <span>或者上传新文档：</span>
           <button type="button" class="upload-new-btn" id="uploadForFeedbackDocBtn">上传文档到文档库</button>
-          <input type="file" id="feedbackDocFileInput" accept=".doc,.docx,.pdf,.xls,.xlsx,.ppt,.pptx,.txt" style="display:none">
+          <input type="file" id="feedbackDocFileInput" accept=".doc,.docx,.pdf,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar,.7z,.7zip,.tar,.gz,.tgz" style="display:none">
           <span id="docUploadProgress" style="font-size:.75rem;color:#3b82f6;"></span>
         </div>
       </div>
@@ -237,7 +237,7 @@
 
     <div class="toolbar">
       <button class="upload-new-btn" id="docUploadBtn">上传文档</button>
-      <input type="file" id="docFileInput" accept=".doc,.docx,.pdf,.xls,.xlsx,.ppt,.pptx,.txt" style="display:none">
+      <input type="file" id="docFileInput" accept=".doc,.docx,.pdf,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar,.7z,.7zip,.tar,.gz,.tgz" style="display:none">
       <input type="text" id="docSearchInput" placeholder="搜索文档" style="flex:1;padding:8px 12px;border-radius:40px;border:1px solid #cfdfed;outline:none;">
       <button class="refresh-btn" id="searchRefreshBtn">搜索</button>
       <button class="refresh-btn" id="refreshDocsBtn">刷新列表</button>
@@ -348,6 +348,24 @@
     </div>
   </div>
 </div>
+
+<!-- 压缩包预览模态框 -->
+<div id="archivePreviewModal" class="doc-preview-modal">
+  <div class="doc-preview-panel" style="width: min(900px, 96vw); height: min(700px, 85vh);">
+      <div class="doc-preview-header">
+          <div class="doc-preview-title" id="archivePreviewTitle">压缩包内容预览</div>
+          <button class="doc-preview-close" id="closeArchivePreviewBtn">&times;</button>
+      </div>
+      <div class="doc-preview-body" style="overflow: auto; padding: 16px;">
+          <div class="doc-preview-loading" id="archivePreviewLoading" style="display: none;">加载文件列表中...</div>
+          <div id="archiveFileList" style="width: 100%;"></div>
+      </div>
+      <div class="doc-preview-footer">
+          <button class="doc-preview-nav" id="archivePreviewCloseBtn">关闭</button>
+      </div>
+  </div>
+</div>
+
 
 <div id="userPanelOverlay" class="user-panel-overlay">
   <div class="user-panel">
