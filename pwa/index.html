@@ -2,13 +2,31 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=yes">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=yes,viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' https://*.myqcloud.com https://*.cos.*.myqcloud.com; object-src 'none'; base-uri 'self'; form-action 'self'">
+<meta name="theme-color" content="#3b82f6">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="反馈系统">
 <title>问题反馈协作系统</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="stylesheet" href="css/style.css">
-<script src="https://unpkg.com/cos-js-sdk-v5/dist/cos-js-sdk-v5.min.js"></script>
+<script src="vendor/cos-js-sdk-v5.min.js"></script>
 </head>
 <body>
 
+<!-- 自定义标题栏（仅当在 Electron 中运行时显示） -->
+<div id="custom-titlebar" style="display: none; position: fixed; top: 0; left: 0; right: 0; height: 32px; background: linear-gradient(135deg, #3b82f6, #8b5cf6); -webkit-app-region: drag; z-index: 1000;">
+  <div class="window-controls" style="display: flex; justify-content: flex-end; align-items: center; height: 100%; -webkit-app-region: no-drag;">
+    <button id="win-minimize" style="background: none; border: none; color: white; font-size: 16px; margin-right: 12px; cursor: pointer;">─</button>
+    <button id="win-maximize" style="background: none; border: none; color: white; font-size: 16px; margin-right: 12px; cursor: pointer;">□</button>
+    <button id="win-close" style="background: none; border: none; color: white; font-size: 16px; margin-right: 16px; cursor: pointer;">✕</button>
+  </div>
+</div>
+  
+  
 <!-- ========== 登录页 ========== -->
 <div class="page-view login-page" id="page-login">
   <div class="auth-card">
@@ -406,6 +424,51 @@
   </div>
 </div>
 
+<script>
+  // 检测是否在 Electron 中运行
+  if (window.electronAPI && window.electronAPI.isElectron) {
+    // 为 body 添加特殊类，用于 CSS 适配
+    document.body.classList.add('electron-mode');
+
+    // 显示自定义标题栏
+    const titlebar = document.getElementById('custom-titlebar');
+    if (titlebar) titlebar.style.display = 'flex';
+
+    // 绑定窗口控制按钮
+    const minimizeBtn = document.getElementById('win-minimize');
+    const maximizeBtn = document.getElementById('win-maximize');
+    const closeBtn = document.getElementById('win-close');
+
+    if (minimizeBtn) minimizeBtn.onclick = () => window.electronAPI.minimizeWindow();
+    if (maximizeBtn) maximizeBtn.onclick = () => window.electronAPI.maximizeWindow();
+    if (closeBtn) closeBtn.onclick = () => window.electronAPI.closeWindow();
+  }
+  document.addEventListener('contextmenu', (e) => {
+    // 阻止默认浏览器右键菜单
+    e.preventDefault();
+    // 根据右键点击的元素类型，传递额外信息
+    const params = {
+      isImage: e.target.tagName === 'IMG',
+      src: e.target.src,
+      x: e.clientX,
+      y: e.clientY
+    };
+    // 调用 Electron API 显示自定义菜单
+    if (window.electronAPI) {
+      window.electronAPI.showContextMenu(params);
+    }
+  });
+</script>
+
 <script src="js/app.js"></script>
+<script>
+  if ('serviceWorker' in navigator && window.location.protocol !== 'file:') {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('./sw.js').catch(function (err) {
+        console.warn('Service worker registration failed:', err);
+      });
+    });
+  }
+</script>
 </body>
 </html>
