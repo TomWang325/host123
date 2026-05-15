@@ -1590,7 +1590,7 @@ function setupNavTabs() {
   html += '<a class="nav-tab" data-page="gallery" href="javascript:void(0)">图片管理</a>';
   html += '<a class="nav-tab" data-page="docs" href="javascript:void(0)">文档管理</a>';   
   if (currentRole() === 'admin') {
-    html += '<a class="nav-tab" data-page="admin" href="javascript:void(0)">管理员</a>';
+    html += '<a class="nav-tab" data-page="admin" href="javascript:void(0)">用户管理</a>';
   }
   $('navTabs').innerHTML = html;
   if ($('navTabs2')) $('navTabs2').innerHTML = html;
@@ -2869,7 +2869,12 @@ function renderAdminUserTable(targetEl) {
   for (const username in users) {
     count++;
     const user = users[username];
-    html += '<tr><td>' + escapeHtml(username) + '</td><td>' + escapeHtml(user.role || 'user') + '</td><td>' + escapeHtml(user.group || '-') + '</td><td>' + (user.created_at ? formatTime(user.created_at) : '-') + '</td><td>';
+    html += '<tr>';
+    html += '<td data-label="用户名">' + escapeHtml(username) + '</td>';
+    html += '<td data-label="角色">' + escapeHtml(user.role || 'user') + '</td>';
+    html += '<td data-label="分组">' + escapeHtml(user.group || '-') + '</td>';
+    html += '<td data-label="注册时间">' + (user.created_at ? formatTime(user.created_at) : '-') + '</td>';
+    html += '<td data-label="操作">';
     if (username !== currentUser()) {
       html += '<div class="admin-user-actions">';
       html += '<button class="admin-action-btn admin-change-pwd-btn" data-username="' + escapeHtml(username) + '">修改密码</button>';
@@ -2879,7 +2884,8 @@ function renderAdminUserTable(targetEl) {
     } else {
       html += '<em>当前用户</em>';
     }
-    html += '</td></tr>';
+    html += '</td>';
+    html += '</tr>';
   }
   if (!count) {
     html += '<tr><td colspan="5" style="text-align:center;padding:32px;color:#94a3b8;">无匹配用户</td></tr>';
@@ -2887,6 +2893,7 @@ function renderAdminUserTable(targetEl) {
   html += '</tbody></table></div>';
   targetEl.innerHTML = html;
 
+  // 绑定按钮事件（保持不变）
   targetEl.querySelectorAll('.admin-change-pwd-btn').forEach(function (btn) {
     btn.onclick = function (e) {
       e.stopPropagation();
