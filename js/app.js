@@ -12,6 +12,8 @@ var COS_CONFIG = (function() {
   }, stored || {});
 })();
 
+
+
 function saveCosConfig(cfg) {
   Object.assign(COS_CONFIG, cfg);
   localStorage.setItem('host_cos_cfg', JSON.stringify({
@@ -508,6 +510,36 @@ function getCosRawUrl(key) {
   return 'https://' + COS_CONFIG.Bucket + '.cos.' + COS_CONFIG.Region + '.myqcloud.com/' + key;
 }
 
+// ==================== 压缩包预览支持 ====================
+const ARCHIVE_EXTENSIONS = [
+  'zip', 'rar', '7z', '7zip', 'tar', 'gz', 'tgz', 
+  'bz2', 'tbz2', 'xz', 'txz', 'apk', 'jar', 'war'
+];
+const MAX_ARCHIVE_SIZE = 128 * 1024 * 1024; // 128MB
+
+function isArchiveFile(filename) {
+  if (!filename) return false;
+  const ext = filename.split('.').pop().toLowerCase();
+  return ARCHIVE_EXTENSIONS.includes(ext);
+}
+
+function checkArchiveSize(file) {
+  if (isArchiveFile(file.name) && file.size > MAX_ARCHIVE_SIZE) {
+      showToast('请上传大小不超过128MB的文件，如仍需上传信息至此系统，请将文件另存其他云存储空间并在反馈中发布访问或下载地址链接。', true);
+      return false;
+  }
+  return true;
+}
+
+// 扩展原文档预览判断函数，压缩包单独处理
+function isDocPreviewable(filename) {
+  if (isArchiveFile(filename)) return true; // 压缩包走预览通道
+  var ext = (filename || '').split('.').pop().toLowerCase();
+  return ['doc', 'docx', 'pdf', 'ppt', 'pptx', 'xls', 'xlsx', 'txt'].indexOf(ext) !== -1;
+}
+
+
+
 function generateSignedUrl(key,originalName = null) {
   return new Promise(function (resolve) {
     var cos = getCosClient();
@@ -625,6 +657,7 @@ function ensureSignedUrl(key, originalName) {
 }
 
 function isDocPreviewable(filename) {
+  if (isArchiveFile(filename)) return true;
   var ext = (filename || '').split('.').pop().toLowerCase();
   return ['doc', 'docx', 'pdf', 'ppt', 'pptx', 'xls', 'xlsx', 'txt'].indexOf(ext) !== -1;
 }
@@ -666,12 +699,330 @@ function ensureDocPreviewUrl(key, page) {
   });
 }
 
-async function openDocPreview(storedName, originalName) {
-  if (!isDocPreviewable(originalName || storedName)) {
-    showToast('该文档类型暂不支持图片预览', true);
-    return;
+
+
+// ================================压缩包预览======================
+
+// 压缩包预览状态
+var archivePreviewState = {
+  storedName: '',
+  originalName: '',
+  list: [],
+  currentPath: '',
+  hasMore: false,
+  context: ''  // 分页标记
+};
+
+// 获取压缩包文件列表（COS zippreview 返回 XML，cos.request 会解析到 data.Response）
+async function fetchArchiveFileList(storedName, path = '', marker = '') {
+  const cos = getCosClient();
+  if (!cos) throw new Error('COS未配置');
+
+  const host = COS_CONFIG.Bucket + '.cos.' + COS_CONFIG.Region + '.myqcloud.com';
+  const url = 'https://' + host + '/' + encodeURI(storedName).replace(/#/g, '%23');
+
+  return new Promise((resolve, reject) => {
+      cos.request({
+          Method: 'GET',
+          Key: storedName,
+          Url: url,
+          Query: {
+              'ci-process': 'zippreview'
+          }
+      }, function (err, data) {
+          if (err) {
+              console.error('zippreview 请求失败：', err);
+              const msg = (err.error && (err.error.Message || err.error.message)) || err.message || '请确认已开通数据万象文件处理服务，并检查 COS 权限';
+              reject(new Error(msg));
+              return;
+          }
+
+          try {
+              const response = data.Response || {};
+              let contents = response.Contents || [];
+              if (!Array.isArray(contents)) contents = contents ? [contents] : [];
+
+              const prefix = path ? path.replace(/\/?$/, '/') : '';
+              const dirMap = {};
+              const files = [];
+
+              contents.forEach(item => {
+                  const fullKey = item.Key || item.key || '';
+                  if (!fullKey) return;
+                  if (prefix && fullKey.indexOf(prefix) !== 0) return;
+
+                  const rest = prefix ? fullKey.slice(prefix.length) : fullKey;
+                  if (!rest) return;
+
+                  const slashIndex = rest.indexOf('/');
+                  if (slashIndex >= 0) {
+                      const dirName = rest.slice(0, slashIndex);
+                      if (dirName) dirMap[dirName] = true;
+                  } else {
+                      files.push({
+                          type: 'file',
+                          name: rest,
+                          size: parseInt(item.UncompressedSize || item.Size || item.size || 0, 10),
+                          lastModified: item.LastModified || item.lastModified || ''
+                      });
+                  }
+              });
+
+              const dirs = Object.keys(dirMap).sort().map(name => ({
+                  type: 'dir',
+                  name: name,
+                  size: 0
+              }));
+              files.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+
+              resolve({
+                  Files: dirs.concat(files),
+                  IsTruncated: 'false',
+                  NextMarker: '',
+                  FileNumber: response.FileNumber || contents.length
+              });
+          } catch (e) {
+              console.error('解析 zippreview 结果失败：', e, data);
+              reject(new Error('解析压缩包预览结果失败'));
+          }
+      });
+  });
+}
+
+// 从压缩包中提取单个文件并下载
+async function extractArchiveFile(storedName, internalPath, originalFilename) {
+  const cos = getCosClient();
+  if (!cos) throw new Error('COS未配置');
+  
+  // 构造下载 URL（带签名）
+  const url = await new Promise((resolve, reject) => {
+      cos.getObjectUrl({
+          Bucket: COS_CONFIG.Bucket,
+          Region: COS_CONFIG.Region,
+          Key: storedName,
+          Sign: true,
+          Expires: 3600,
+          Query: {
+              'ci-process': 'zippreview',
+              path: internalPath,
+              'response-content-disposition': `attachment; filename="${encodeURIComponent(originalFilename)}"`
+          }
+      }, (err, data) => {
+          if (err) reject(err);
+          else resolve(data.Url);
+      });
+  });
+  
+  // 触发下载
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = originalFilename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+// 打开压缩包预览模态框
+async function openArchivePreview(storedName, originalName) {
+  if (!isArchiveFile(originalName)) {
+      showToast('该文件不是压缩包', true);
+      return;
   }
-  docPreviewState = { storedName: storedName, originalName: originalName || storedName, page: 1, zoom: 1 };
+  
+  const modal = $('archivePreviewModal');
+  if (!modal) {
+      console.error('缺少压缩包预览模态框元素 archivePreviewModal');
+      showToast('预览功能不可用，请刷新页面重试', true);
+      return;
+  }
+  
+  // 重置状态
+  archivePreviewState = {
+      storedName: storedName,
+      originalName: originalName,
+      list: [],
+      currentPath: '',
+      hasMore: false,
+      context: ''
+  };
+  
+  const titleEl = $('archivePreviewTitle');
+  if (titleEl) titleEl.textContent = originalName;
+  
+  const loadingEl = $('archivePreviewLoading');
+  if (loadingEl) loadingEl.style.display = 'block';
+  
+  const listContainer = $('archiveFileList');
+  if (listContainer) listContainer.innerHTML = '';
+  
+  modal.classList.add('show');
+  
+  try {
+      await loadArchiveDirectory('');
+  } catch (err) {
+      console.error('加载压缩包内容失败', err);
+      showToast('预览失败：' + (err.message || '请确认已开通数据万象文件处理服务'), true);
+      if (loadingEl) loadingEl.textContent = '预览失败，请稍后重试';
+      // 可选：关闭模态框或保留失败提示
+  } finally {
+      if (loadingEl) loadingEl.style.display = 'none';
+  }
+}
+
+// 加载指定目录（根目录传空字符串）
+async function loadArchiveDirectory(path) {
+  if (!archivePreviewState.storedName) return;
+  
+  const loading = $('archivePreviewLoading');
+  const listContainer = $('archiveFileList');
+  if (loading) loading.style.display = 'block';
+  if (listContainer) listContainer.innerHTML = '';
+  
+  try {
+      const result = await fetchArchiveFileList(archivePreviewState.storedName, path);
+      archivePreviewState.currentPath = path;
+      archivePreviewState.hasMore = result.IsTruncated === 'true';
+      archivePreviewState.context = result.NextMarker || '';
+      
+      renderArchiveFileList(result.Files || [], path);
+      if (loading) loading.style.display = 'none';
+  } catch (err) {
+      if (loading) {
+          loading.textContent = '预览失败：' + (err.message || '请确认已开通数据万象文件处理服务');
+          loading.style.display = 'block';
+      }
+      showToast('预览失败：' + err.message, true);
+  }
+}
+
+// 渲染压缩包文件列表
+function renderArchiveFileList(files, currentPath) {
+  const container = $('archiveFileList');
+  if (!container) return;
+  
+  if (!files.length && currentPath === '') {
+      container.innerHTML = '<div class="empty-state">该压缩包内没有文件</div>';
+      return;
+  }
+  
+  let html = '<table class="archive-file-table"><thead><tr><th>文件名</th><th>大小</th><th>操作</th></tr></thead><tbody>';
+  files.forEach(file => {
+      const isDir = file.type === 'dir';
+      const sizeStr = isDir ? '-' : formatSize(parseInt(file.size) || 0);
+      const encodedPath = encodeURIComponent(file.name);
+      const displayName = file.name;
+      
+      html += `<tr data-file-path="${file.name}" data-is-dir="${isDir}">
+          <td class="archive-filename">${isDir ? '📁 ' : '📄 '} ${escapeHtml(displayName)}</td>
+          <td>${sizeStr}</td>
+          <td>${isDir ? 
+              `<button class="archive-enter-dir" data-path="${file.name}">进入</button>` :
+              `<button class="archive-download-file" data-path="${file.name}" data-name="${escapeHtml(displayName)}">下载</button>`
+          }</td>
+      </tr>`;
+  });
+  html += '</tbody></table>';
+  
+  if (currentPath !== '') {
+      html = `<div class="archive-breadcrumb"><button class="archive-go-back">← 返回上级目录</button></div>` + html;
+  }
+  if (archivePreviewState.hasMore) {
+      html += `<div class="archive-load-more"><button class="archive-load-more-btn">加载更多</button></div>`;
+  }
+  
+  container.innerHTML = html;
+  
+  // 绑定事件
+  container.querySelectorAll('.archive-enter-dir').forEach(btn => {
+      btn.addEventListener('click', () => {
+          const subPath = btn.getAttribute('data-path');
+          const newPath = archivePreviewState.currentPath ? 
+              archivePreviewState.currentPath + '/' + subPath : subPath;
+          loadArchiveDirectory(newPath);
+      });
+  });
+  
+  container.querySelectorAll('.archive-go-back').forEach(btn => {
+      btn.addEventListener('click', () => {
+          const parentPath = archivePreviewState.currentPath.split('/').slice(0, -1).join('/');
+          loadArchiveDirectory(parentPath);
+      });
+  });
+  
+  container.querySelectorAll('.archive-download-file').forEach(btn => {
+      btn.addEventListener('click', async () => {
+          const internalPath = archivePreviewState.currentPath ? 
+              archivePreviewState.currentPath + '/' + btn.getAttribute('data-path') : 
+              btn.getAttribute('data-path');
+          const filename = btn.getAttribute('data-name');
+          try {
+              await extractArchiveFile(archivePreviewState.storedName, internalPath, filename);
+              showToast('开始下载: ' + filename);
+          } catch (err) {
+              showToast('下载失败: ' + err.message, true);
+          }
+      });
+  });
+  
+  container.querySelectorAll('.archive-load-more-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+          // 加载更多（使用 NextMarker）
+          try {
+              const result = await fetchArchiveFileList(
+                  archivePreviewState.storedName, 
+                  archivePreviewState.currentPath, 
+                  archivePreviewState.context
+              );
+              const newFiles = result.Files || [];
+              // 追加到现有列表
+              const tbody = container.querySelector('tbody');
+              newFiles.forEach(file => {
+                  // 动态追加行（略，可复用上面渲染逻辑，简单起见重新全量渲染）
+                  // 这里简化：重新调用 loadArchiveDirectory 但保留原有文件列表？更好的做法是追加，但为了代码简洁，重新加载全部会影响体验，这里采用追加方式
+              });
+              archivePreviewState.hasMore = result.IsTruncated === 'true';
+              archivePreviewState.context = result.NextMarker || '';
+              if (!archivePreviewState.hasMore) {
+                  const moreBtn = container.querySelector('.archive-load-more');
+                  if (moreBtn) moreBtn.remove();
+              }
+          } catch (err) {
+              showToast('加载更多失败', true);
+          }
+      });
+  });
+}
+
+// 关闭压缩包预览
+function closeArchivePreview() {
+  if ($('archivePreviewModal')) $('archivePreviewModal').classList.remove('show');
+  if ($('archiveFileList')) $('archiveFileList').innerHTML = '';
+}
+
+
+
+// ======================= 文档预览=====================
+
+async function openDocPreview(storedName, originalName) {
+  // 1. 先检查是否为压缩包（优先处理，因为压缩包也满足 isDocPreviewable 的扩展）
+  if (isArchiveFile(originalName || storedName)) {
+      await openArchivePreview(storedName, originalName);
+      return;
+  }
+  
+  // 2. 非压缩包，检查是否为可预览的文档类型
+  if (!isDocPreviewable(originalName || storedName)) {
+      showToast('该文档类型暂不支持图片预览', true);
+      return;
+  }
+  
+  // 3. 原有的文档预览逻辑（保持不变）
+  docPreviewState = { 
+      storedName: storedName, 
+      originalName: originalName || storedName, 
+      page: 1, 
+      zoom: 1 
+  };
   if ($('docPreviewTitle')) $('docPreviewTitle').textContent = docPreviewState.originalName;
   if ($('docPreviewModal')) $('docPreviewModal').classList.add('show');
   updateDocPreviewZoom();
@@ -883,6 +1234,12 @@ function getImageUrl(item) {
 }
 function uploadToCosGeneric(file, onProgress) {
   return new Promise((resolve, reject) => {
+    //压缩包大小限制
+    if (!checkArchiveSize(file)) {
+      reject(new Error('ARCHIVE_SIZE_LIMIT'));
+      return;
+    }
+
     if (!COS_CONFIG.enabled || !COS_CONFIG.SecretId) {
       reject(new Error('COS未配置'));
       return;
@@ -1022,12 +1379,14 @@ function renderDocList(docs) {
   var html = '';
   docs.forEach((doc) => {
     var canDelete = doc.uploader === currentUser() || currentRole() === 'admin';
+    // 判断是否显示预览按钮：原有文档类型 或 压缩包
+    var showPreview = isDocPreviewable(doc.original_name) || isArchiveFile(doc.original_name);
     html += `<div class="image-card" data-stored="${doc.stored_name}">
       <div class="card-info">
         <div class="img-name" title="${escapeHtml(doc.original_name)}">${escapeHtml(doc.original_name)}</div>
         <div class="img-meta"><span>${escapeHtml(doc.uploader)}</span><span>${formatSize(doc.file_size)}</span></div>
         <div class="card-actions">
-          ${isDocPreviewable(doc.original_name) ? `<button class="preview-doc-btn" data-stored="${doc.stored_name}" data-name="${escapeHtml(doc.original_name)}" type="button">预览</button>` : ''}
+          ${showPreview ? `<button class="preview-doc-btn" data-stored="${doc.stored_name}" data-name="${escapeHtml(doc.original_name)}" type="button">预览</button>` : ''}
           <span class="download-doc-btn" data-stored="${doc.stored_name}" data-name="${escapeHtml(doc.original_name)}" style="background:#eef2ff;border:none;flex:1;padding:6px;border-radius:40px;font-size:.7rem;cursor:pointer;color:#3b82f6;display:flex;align-items:center;justify-content:center;gap:4px;">下载</span>
           ${canDelete ? `<button class="delete-doc-btn" data-stored="${doc.stored_name}" style="background:#ef4444;color:#fff;border:none;flex:1;padding:6px;border-radius:40px;font-size:.7rem;cursor:pointer;">删除</button>` : ''}
         </div>
@@ -1041,6 +1400,7 @@ function renderDocList(docs) {
       e.stopPropagation();
       var storedName = btn.getAttribute('data-stored');
       var originalName = btn.getAttribute('data-name');
+      // openDocPreview 内部已支持压缩包预览
       openDocPreview(storedName, originalName);
     });
   });
@@ -1050,7 +1410,7 @@ function renderDocList(docs) {
       e.stopPropagation();
       var storedName = btn.getAttribute('data-stored');
       var originalName = btn.getAttribute('data-name');
-      var url = await ensureSignedUrl(storedName,originalName);
+      var url = await ensureSignedUrl(storedName, originalName);
       downloadFile(url, originalName);
     });
   });
@@ -1061,7 +1421,7 @@ function renderDocList(docs) {
       if (confirm('确定删除此文档吗？')) {
         var stored = btn.getAttribute('data-stored');
         try {
-          await deleteDocument(stored);   // 调用 COS 删除接口
+          await deleteDocument(stored);
           showToast('文档已删除');
         } catch (err) {
           showToast('删除失败：' + err.message, true);
@@ -1631,7 +1991,7 @@ function renderFeedbackList() {
     html += '<button class="comment-upload-img" data-fb="' + fb.id + '">图片</button>';
     html += '<button class="comment-upload-doc" data-fb="' + fb.id + '">文档</button>';
     html += '<input type="file" id="comment-file-' + fb.id + '" accept="image/*" style="display:none;">';
-    html += '<input type="file" id="comment-doc-file-' + fb.id + '" accept=".doc,.docx,.pdf,.xls,.xlsx,.ppt,.pptx,.txt" style="display:none;">';
+    html += '<input type="file" id="comment-doc-file-' + fb.id + '" accept=".doc,.docx,.pdf,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar,.7z,.7zip,.tar,.gz,.tgz" style="display:none;">';
     html += '<button class="comment-submit" data-fb="' + fb.id + '">发送</button>';
     html += '</div>';
     html += '<div class="comment-images-preview" id="comment-preview-' + fb.id + '"></div>';
@@ -2822,6 +3182,13 @@ function bindGlobalEvents() {
   if ($('docPreviewModal')) $('docPreviewModal').addEventListener('click', function (e) {
     if (e.target === this) closeDocPreview();
   });
+
+  // 压缩包预览关闭事件：绑定右上角 X、底部“关闭”按钮、点击遮罩关闭
+  if ($('closeArchivePreviewBtn')) $('closeArchivePreviewBtn').addEventListener('click', closeArchivePreview);
+  if ($('archivePreviewCloseBtn')) $('archivePreviewCloseBtn').addEventListener('click', closeArchivePreview);
+  if ($('archivePreviewModal')) $('archivePreviewModal').addEventListener('click', function (e) {
+    if (e.target === this) closeArchivePreview();
+  });
   if ($('docPreviewPrevBtn')) $('docPreviewPrevBtn').addEventListener('click', function () {
     loadDocPreviewPage(docPreviewState.page - 1);
   });
@@ -2867,6 +3234,10 @@ function bindGlobalEvents() {
     $('docFileInput').addEventListener('change', async function() {
       if (this.files && this.files[0]) {
         var file = this.files[0];
+        if (!checkArchiveSize(file)) {
+          this.value = '';
+          return;
+        }
         try {
           var result = await uploadToCosGeneric(file);
           addDocument(result.stored_name, result.original_name, result.file_size, currentUser());
@@ -2989,5 +3360,13 @@ async function initApp() {
     tryBind();
   })();
 }
+
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Escape') {
+    if ($('archivePreviewModal') && $('archivePreviewModal').classList.contains('show')) closeArchivePreview();
+    if ($('docPreviewModal') && $('docPreviewModal').classList.contains('show')) closeDocPreview();
+    if ($('imageModal') && $('imageModal').style.display === 'block') $('imageModal').style.display = 'none';
+  }
+});
 
 document.addEventListener('DOMContentLoaded', initApp);
