@@ -80,7 +80,8 @@ const STORAGE_KEYS = {
   feedbacks: 'host_feedbacks',
   notifications: 'host_notifications',
   metadata: 'host_metadata',
-  documents: 'host_documents'
+  documents: 'host_documents',
+  authPrefs: 'host_auth_prefs'
 };
 
 // ==================== 工具函数 ====================
@@ -497,6 +498,96 @@ function currentRole() {
 function currentGroup() {
   var s = getSession();
   return s ? s.group : null;
+}
+
+// ==================== 登录偏好 ====================
+function getAuthPrefs() {
+  try {
+    var raw = localStorage.getItem(STORAGE_KEYS.authPrefs);
+    return raw ? JSON.parse(raw) : {};
+  } catch (e) { return {}; }
+}
+
+function saveAuthPrefs(prefs) {
+  localStorage.setItem(STORAGE_KEYS.authPrefs, JSON.stringify(prefs || {}));
+}
+
+function clearAuthPrefs() {
+  localStorage.removeItem(STORAGE_KEYS.authPrefs);
+}
+
+function applySavedLoginPrefs() {
+  var prefs = getAuthPrefs();
+  if ($('loginUsername')) $('loginUsername').value = prefs.username || '';
+  if ($('loginPassword')) $('loginPassword').value = prefs.rememberPassword ? (prefs.password || '') : '';
+  if ($('rememberPassword')) $('rememberPassword').checked = !!prefs.rememberPassword;
+  if ($('autoLogin')) $('autoLogin').checked = !!prefs.autoLogin;
+}
+
+function bindLoginPrefsEvents() {
+  if ($('autoLogin')) {
+    $('autoLogin').addEventListener('change', function () {
+      if (this.checked && $('rememberPassword')) $('rememberPassword').checked = true;
+    });
+  }
+  if ($('rememberPassword')) {
+    $('rememberPassword').addEventListener('change', function () {
+      if (!this.checked && $('autoLogin')) $('autoLogin').checked = false;
+    });
+  }
+}
+
+async function validateLogin(username, password) {
+  var users = getUsers();
+  if (!users[username]) return null;
+  var hashed = await hashPassword(password);
+  if (users[username].password !== hashed) return null;
+  return {
+    username: username,
+    role: users[username].role || 'user',
+    group: users[username].group || ''
+  };
+}
+
+function saveLoginPrefsFromForm(username, password) {
+  var remember = !!($('rememberPassword') && $('rememberPassword').checked);
+  var auto = !!($('autoLogin') && $('autoLogin').checked);
+  if (auto) remember = true;
+
+  if (!remember && !auto) {
+    clearAuthPrefs();
+    return;
+  }
+
+  saveAuthPrefs({
+    username: username,
+    password: password,
+    rememberPassword: remember,
+    autoLogin: auto
+  });
+}
+
+async function tryAutoLogin() {
+  var prefs = getAuthPrefs();
+  if (!prefs.autoLogin || !prefs.username || !prefs.password) return false;
+
+  var user = await validateLogin(prefs.username, prefs.password);
+  if (!user) {
+    prefs.autoLogin = false;
+    saveAuthPrefs(prefs);
+    applySavedLoginPrefs();
+    return false;
+  }
+
+  setSession(user);
+  return true;
+}
+
+function disableAutoLogin() {
+  var prefs = getAuthPrefs();
+  if (!prefs.autoLogin) return;
+  prefs.autoLogin = false;
+  saveAuthPrefs(prefs);
 }
 
 // ==================== COS 上传模块 ====================
@@ -1233,6 +1324,7 @@ function getImageUrl(item) {
   return item.url || '';
 }
 function uploadToCosGeneric(file, onProgress) {
+  console.log('>>> uploadToCosGeneric 被调用，文件:', file.name, file.size);
   return new Promise((resolve, reject) => {
     //压缩包大小限制
     if (!checkArchiveSize(file)) {
@@ -1255,7 +1347,10 @@ function uploadToCosGeneric(file, onProgress) {
       Region: COS_CONFIG.Region,
       Key: key,
       Body: file,
-      onProgress: onProgress
+      onProgress: function(progressData) {
+        console.log('COS 原始进度:', progressData.percent);
+        if (onProgress) onProgress(progressData.percent * 100);
+      }
     }, function (err, data) {
       if (err) reject(err);
       else resolve({
@@ -1408,10 +1503,14 @@ function renderDocList(docs) {
   container.querySelectorAll('.download-doc-btn').forEach(btn => {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      var storedName = btn.getAttribute('data-stored');
-      var originalName = btn.getAttribute('data-name');
-      var url = await ensureSignedUrl(storedName, originalName);
-      downloadFile(url, originalName);
+      const storedName = btn.getAttribute('data-stored');
+      const originalName = btn.getAttribute('data-name');
+      try {
+        await downloadWithProgress(storedName, originalName);
+        showToast('下载完成');
+      } catch (err) {
+        showToast('下载失败：' + err.message, true);
+      }
     });
   });
 
@@ -1520,19 +1619,14 @@ async function handleLogin(e) {
     $('loginError').style.display = 'block';
     return;
   }
-  var users = getUsers();
-  if (!users[username]) {
+  var user = await validateLogin(username, password);
+  if (!user) {
     $('loginError').textContent = '用户名或密码错误';
     $('loginError').style.display = 'block';
     return;
   }
-  var hashed = await hashPassword(password);
-  if (users[username].password !== hashed) {
-    $('loginError').textContent = '用户名或密码错误';
-    $('loginError').style.display = 'block';
-    return;
-  }
-  setSession({ username: username, role: users[username].role || 'user', group: users[username].group || '' });
+  setSession(user);
+  saveLoginPrefsFromForm(username, password);
   $('loginError').style.display = 'none';
   navigate('main');
 }
@@ -1579,6 +1673,8 @@ async function handleRegister(e) {
 
 async function handleLogout() {
   await flushAllPending();
+  disableAutoLogin();
+  applySavedLoginPrefs();
   clearSession();
   navigate('login');
 }
@@ -1740,10 +1836,15 @@ async function uploadImageForFeedback(file) {
   if (allowed.indexOf(file.type) === -1) { showToast('不支持该图片格式', true); return false; }
   if (file.size > 10 * 1024 * 1024) { showToast('图片不能超过10MB', true); return false; }
   $('uploadProgress').textContent = '上传中...';
+  showTransferProgress(0, '上传图片');
   try {
-    var result = await uploadImage(file);
+    var result = await uploadImage(file, function (progressData) {
+      var percent = typeof progressData === 'number' ? progressData : (progressData && progressData.percent * 100);
+      showTransferProgress(percent || 0, '上传图片');
+    });
     addMetadata(result.stored_name, result.original_name, result.file_size, currentUser(), result._base64, result.url);
     $('uploadProgress').textContent = '';
+    completeTransferProgress('图片上传完成');
     showToast('图片已上传: ' + result.original_name);
     loadImagesForFeedback();
     selectedImages.push(result.stored_name);
@@ -1752,14 +1853,19 @@ async function uploadImageForFeedback(file) {
     return true;
   } catch (err) {
     $('uploadProgress').textContent = '';
+    showTransferProgress();
     showToast('上传失败: ' + (err.message || err), true);
     return false;
   }
 }
 
 async function uploadCommentImage(feedbackId, file) {
+  showTransferProgress(0, '上传图片');
   try {
-    var result = await uploadImage(file);
+    var result = await uploadImage(file, function (progressData) {
+      var percent = typeof progressData === 'number' ? progressData : (progressData && progressData.percent * 100);
+      showTransferProgress(percent || 0, '上传图片');
+    });
     addMetadata(result.stored_name, result.original_name, result.file_size, currentUser(), result._base64, result.url);
     if (!commentPendingImages[feedbackId]) commentPendingImages[feedbackId] = [];
     commentPendingImages[feedbackId].push(result.stored_name);
@@ -1783,8 +1889,10 @@ async function uploadCommentImage(feedbackId, file) {
       wrapper.appendChild(removeBtn);
       previewDiv.appendChild(wrapper);
     }
+    completeTransferProgress('图片上传完成');
     showToast('图片已添加');
   } catch (err) {
+    showTransferProgress();
     showToast('上传失败: ' + (err.message || err), true);
   }
 }
@@ -2022,12 +2130,12 @@ function renderFeedbackList() {
   // 绑定反馈文档下载
   container.querySelectorAll('.download-feedback-doc').forEach(link => {
     link.addEventListener('click', async (e) => {
-      e.preventDefault();  // 虽然不是 <a> 但保留无害
+      e.preventDefault();
       const stored = link.getAttribute('data-stored');
       const originalName = link.getAttribute('data-name');
       try {
-        const url = await ensureSignedUrl(stored,originalName);
-        downloadFile(url, originalName);
+        await downloadWithProgress(stored, originalName);
+        showToast('下载完成');
       } catch (err) {
         showToast('下载失败：' + err.message, true);
       }
@@ -2050,8 +2158,8 @@ function renderFeedbackList() {
       const stored = link.getAttribute('data-stored');
       const originalName = link.getAttribute('data-name');
       try {
-        const url = await ensureSignedUrl(stored,originalName);
-        downloadFile(url, originalName);
+        await downloadWithProgress(stored, originalName);
+        showToast('下载完成');
       } catch (err) {
         showToast('下载失败：' + err.message, true);
       }
@@ -2251,7 +2359,7 @@ function deleteFeedback(id) {
   showToast('反馈已删除');
 }
 
-function addComment(feedbackId, content, images) {
+function addComment(feedbackId, content, images,docs) {
   var feedbacks = getFeedbacks();
   var idx = feedbacks.findIndex(function (fb) { return fb.id === feedbackId; });
   if (idx === -1) return;
@@ -2440,7 +2548,7 @@ const DocIntegration = (function() {
   // 上传文档并添加到指定的目标（反馈或评论）
   // target: 'feedback' 或 'comment'
   // feedbackId: 仅当 target === 'comment' 时需要
-  async function uploadDoc(file, target, feedbackId = null) {
+  async function uploadDoc(file, target, feedbackId = null,onProgress) {
     if (!file) return false;
     const allowedExts = ['.doc','.docx','.pdf','.xls','.xlsx','.ppt','.pptx','.txt'];
     const ext = '.' + file.name.split('.').pop().toLowerCase();
@@ -2450,7 +2558,7 @@ const DocIntegration = (function() {
     }
     if (docUploadProgress) docUploadProgress.textContent = '上传中...';
     try {
-      const result = await uploadToCosGeneric(file);
+      const result = await uploadToCosGeneric(file,onProgress);
       addDocument(result.stored_name, result.original_name, result.file_size, currentUser());
       await saveDataNow(STORAGE_KEYS.documents, getDocuments()); // 立即同步到COS
       if (docUploadProgress) docUploadProgress.textContent = '';
@@ -2517,15 +2625,35 @@ const DocIntegration = (function() {
       docFileInput = document.getElementById('feedbackDocFileInput');
 
       if (docDrawerHeader) docDrawerHeader.addEventListener('click', toggleDrawer);
-      if (uploadDocBtn && docFileInput) {
-        uploadDocBtn.addEventListener('click', () => docFileInput.click());
-        docFileInput.addEventListener('change', async function() {
-          if (this.files && this.files[0]) {
-            await uploadDoc(this.files[0], 'feedback');
-            this.value = '';
+if (uploadDocBtn && docFileInput) {
+  uploadDocBtn.addEventListener('click', () => docFileInput.click());
+  docFileInput.addEventListener('change', async function() {
+    if (this.files && this.files[0]) {
+      const file = this.files[0];
+      // 显示进度条
+      if (typeof showTransferProgress === 'function') {
+        showTransferProgress(0, '上传文档');
+      }
+      try {
+        // 注意：uploadDoc 函数需要支持 onProgress 回调，见下方修改
+        await uploadDoc(file, 'feedback',null, (percent) => {
+          if (typeof showTransferProgress === 'function') {
+            showTransferProgress(percent, '上传文档');
           }
         });
+        if (typeof showTransferProgress === 'function') {
+          completeTransferProgress('文档上传完成');
+        }
+      } catch (err) {
+        if (typeof showTransferProgress === 'function') {
+          showTransferProgress();
+        }
+        // 错误处理已在 uploadDoc 内部进行，这里可留空或添加额外提示
       }
+      this.value = '';
+    }
+  });
+}
       // 预加载文档列表（可选）
       loadDocs();
     },
@@ -2541,8 +2669,8 @@ const DocIntegration = (function() {
     },
 
     // 为某条评论上传文档并添加（供评论区文件上传按钮使用）
-    addCommentDoc: async (feedbackId, file) => {
-      return await uploadDoc(file, 'comment', feedbackId);
+    addCommentDoc: async (feedbackId, file,onProgress) => {
+      return await uploadDoc(file, 'comment', feedbackId,onProgress);
     },
 
     // 获取某条评论当前待引用的文档列表
@@ -3238,25 +3366,35 @@ function bindGlobalEvents() {
   // 文档管理模块事件
   if ($('docUploadBtn')) {
     $('docUploadBtn').addEventListener('click', () => $('docFileInput').click());
-    $('docFileInput').addEventListener('change', async function() {
-      if (this.files && this.files[0]) {
-        var file = this.files[0];
-        if (!checkArchiveSize(file)) {
-          this.value = '';
-          return;
-        }
-        try {
-          var result = await uploadToCosGeneric(file);
-          addDocument(result.stored_name, result.original_name, result.file_size, currentUser());
-          await saveDataNow(STORAGE_KEYS.documents, getDocuments());
-          renderDocsPage();
-          showToast('文档上传成功');
-        } catch (err) {
-          showToast('上传失败：' + err.message, true);
-        }
-        this.value = '';
+$('docFileInput').addEventListener('change', async function() {
+  if (this.files && this.files[0]) {
+    var file = this.files[0];
+    if (!checkArchiveSize(file)) {
+      this.value = '';
+      return;
+    }
+    // 显示进度条
+    showTransferProgress(0, '上传文档');
+    try {
+      var result = await uploadToCosGeneric(file, (percent) => {
+        showTransferProgress(percent, '上传文档');
+      });
+      completeTransferProgress('文档上传完成');
+      addDocument(result.stored_name, result.original_name, result.file_size, currentUser());
+      await saveDataNow(STORAGE_KEYS.documents, getDocuments());
+      renderDocsPage();
+      showToast('文档上传成功');
+    } catch (err) {
+      showTransferProgress(); // 出错也要隐藏进度条
+      if (err.message === 'ARCHIVE_SIZE_LIMIT') {
+        showToast('压缩包大小超过限制（最大100MB）', true);
+      } else {
+        showToast('上传失败：' + err.message, true);
       }
-    });
+    }
+    this.value = '';
+  }
+});
     if ($('refreshDocsBtn')) {
       // 移除可能存在的旧监听器（避免重复）
       const oldBtn = $('refreshDocsBtn');
@@ -3295,6 +3433,8 @@ async function initApp() {
   }
 
   bindGlobalEvents();
+  bindLoginPrefsEvents();
+  applySavedLoginPrefs();
 
   window.addEventListener('beforeunload', function () {
     var keys = Object.keys(PENDING_SAVES);
@@ -3304,6 +3444,10 @@ async function initApp() {
       saveDataRemote(k);
     });
   });
+
+  if (!currentUser()) {
+    await tryAutoLogin();
+  }
 
   if (currentUser()) {
     navigate('main');
@@ -3376,4 +3520,92 @@ document.addEventListener('keydown', function (e) {
   }
 });
 
+// 下载上传传输显示
+// 显示/隐藏传输进度条
+var transferProgressHideTimer = null;
+
+function showTransferProgress(percent, text = '传输进度') {
+  console.log('[PROGRESS] 调用进度', percent, text);
+  const container = $('transfer-progress');
+  const textSpan = $('transfer-text');
+  const percentSpan = $('transfer-percent');
+  const bar = $('transfer-bar');
+  if (!container) return;
+
+  if (transferProgressHideTimer) {
+    clearTimeout(transferProgressHideTimer);
+    transferProgressHideTimer = null;
+  }
+
+  if (percent === undefined) {
+    container.classList.remove('show', 'complete');
+    if (bar) bar.style.width = '0%';
+    return;
+  }
+
+  const safePercent = Math.max(0, Math.min(100, Number(percent) || 0));
+  container.classList.remove('complete');
+  container.classList.add('show');
+  if (textSpan) textSpan.textContent = text;
+  if (percentSpan) percentSpan.textContent = Math.round(safePercent);
+  if (bar) bar.style.width = safePercent + '%';
+}
+
+function completeTransferProgress(text = '传输完成') {
+  const container = $('transfer-progress');
+  const textSpan = $('transfer-text');
+  const percentSpan = $('transfer-percent');
+  const bar = $('transfer-bar');
+  if (!container) return;
+
+  if (transferProgressHideTimer) clearTimeout(transferProgressHideTimer);
+  container.classList.add('show', 'complete');
+  if (textSpan) textSpan.textContent = text;
+  if (percentSpan) percentSpan.textContent = '100';
+  if (bar) bar.style.width = '100%';
+  transferProgressHideTimer = setTimeout(function () {
+    showTransferProgress();
+  }, 1200);
+}
+function downloadWithProgress(key, originalName) {
+  return new Promise((resolve, reject) => {
+    const cos = getCosClient();
+    if (!cos) {
+      reject(new Error('COS未配置'));
+      return;
+    }
+    
+    showTransferProgress(0, '下载文档');
+    
+    cos.getObject({
+      Bucket: COS_CONFIG.Bucket,
+      Region: COS_CONFIG.Region,
+      Key: key,
+      onProgress: (progressData) => {
+        const percent = progressData.percent * 100;
+        showTransferProgress(percent, '下载文档');
+      }
+    }, (err, data) => {
+      if (err) {
+        showTransferProgress();
+        reject(err);
+        return;
+      }
+      
+      // 触发浏览器下载
+      const blob = new Blob([data.Body]);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = originalName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      
+      completeTransferProgress('文档下载完成');
+      resolve();
+    });
+  });
+}
 document.addEventListener('DOMContentLoaded', initApp);
