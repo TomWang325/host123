@@ -1,4 +1,4 @@
-﻿const CACHE_NAME = 'feedback-pwa-v2';
+﻿const CACHE_NAME = 'feedback-pwa-v3';
 const APP_SHELL = [
   './',
   './index.html',
@@ -51,5 +51,6 @@ self.addEventListener('fetch', (event) => {
     })
   );
 });
+
 
 

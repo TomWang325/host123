@@ -238,6 +238,16 @@ async function hashPassword(password) {
 
 // ==================== AES-GCM 加密（多设备统一盐） ====================
 var ENC_KEY = null;
+var REMOTE_BOOTSTRAP_BLOCKED = false;
+var REMOTE_BOOTSTRAP_MESSAGE = '';
+
+function isCosNotFoundError(err) {
+  return !!(err && (
+    err.statusCode === 404 ||
+    err.code === 'NoSuchKey' ||
+    (err.error && err.error.Code === 'NoSuchKey')
+  ));
+}
 
 async function initEncSalt() {
   // 如果 COS 可用，优先从 COS 读取全局盐
@@ -259,7 +269,15 @@ async function initEncSalt() {
         localStorage.setItem('host_enc_salt', remoteSalt);
         return remoteSalt;
       }
-    } catch(e) { /* 文件不存在，继续生成新盐 */ }
+    } catch(e) {
+      if (!isCosNotFoundError(e)) {
+        REMOTE_BOOTSTRAP_BLOCKED = true;
+        REMOTE_BOOTSTRAP_MESSAGE = '读取 COS 加密盐失败，请检查 COS 配置、网络或存储桶权限。为避免覆盖远程账户数据，已暂停默认账号初始化。';
+        console.warn('[COS] 读取加密盐失败:', e);
+        throw e;
+      }
+      /* 文件不存在，继续生成新盐 */
+    }
   }
 
   // 如果没有 COS 或远程无盐，则使用本地盐或生成新盐
@@ -333,15 +351,24 @@ function getCosClient() {
 }
 
 function cosGetData(key) {
+  return cosGetDataDetailed(key).then(function (result) {
+    return result.ok ? result.value : null;
+  });
+}
+
+function cosGetDataDetailed(key) {
   return new Promise(function (resolve) {
     var cos = getCosClient();
-    if (!cos) { resolve(null); return; }
+    if (!cos) { resolve({ ok: false, missing: false, error: 'NO_COS' }); return; }
     cos.getObject({
       Bucket: COS_CONFIG.Bucket,
       Region: COS_CONFIG.Region,
       Key: COS_DATA_PREFIX + key + '.enc'
     }, function (err, data) {
-      if (err) { resolve(null); return; }
+      if (err) {
+        resolve({ ok: false, missing: isCosNotFoundError(err), error: err });
+        return;
+      }
       var body = data.Body;
       var str = '';
       if (typeof body === 'string') {
@@ -351,12 +378,12 @@ function cosGetData(key) {
       } else if (body && body instanceof ArrayBuffer) {
         str = new TextDecoder('utf-8').decode(new Uint8Array(body));
       } else {
-        resolve(null);
+        resolve({ ok: false, missing: false, error: 'EMPTY_BODY' });
         return;
       }
       // 移除可能的首尾空白（BOM或换行）
       str = str.trim();
-      resolve(str);
+      resolve({ ok: true, missing: false, value: str });
     });
   });
 }
@@ -531,6 +558,8 @@ function startRemoteSyncLoop() {
 }
 
 async function initData() {
+  REMOTE_BOOTSTRAP_BLOCKED = false;
+  REMOTE_BOOTSTRAP_MESSAGE = '';
   // 1. 先读取本地数据作为后备
   var localUsers = localStorage.getItem(STORAGE_KEYS.users);
   var localFbs = localStorage.getItem(STORAGE_KEYS.feedbacks);
@@ -552,21 +581,27 @@ async function initData() {
   if (getCosClient()) {
     // 辅助函数：从 COS 加载并覆盖指定键
     const loadAndOverwrite = async (key, isArray = false) => {
-      const b64 = await cosGetData(key);
-      if (!b64) return false;
+      const remote = await cosGetDataDetailed(key);
+      if (!remote.ok) return remote;
+      const b64 = remote.value;
       const decrypted = await decryptData(b64);
-      if (!decrypted) return false;
+      if (!decrypted) return { ok: false, missing: false, error: 'DECRYPT_FAILED' };
       try {
         const data = JSON.parse(decrypted);
-        if (isArray && !Array.isArray(data)) return false;
-        if (!isArray && typeof data !== 'object') return false;
+        if (isArray && !Array.isArray(data)) return { ok: false, missing: false, error: 'TYPE_MISMATCH' };
+        if (!isArray && typeof data !== 'object') return { ok: false, missing: false, error: 'TYPE_MISMATCH' };
         CACHE[key] = data;
         localStorage.setItem(key, decrypted);
-        return true;
-      } catch (e) { return false; }
+        return { ok: true, missing: false };
+      } catch (e) { return { ok: false, missing: false, error: e }; }
     };
 
-    await loadAndOverwrite(STORAGE_KEYS.users, false);
+    const usersResult = await loadAndOverwrite(STORAGE_KEYS.users, false);
+    if (!usersResult.ok && !usersResult.missing && !localUsers) {
+      REMOTE_BOOTSTRAP_BLOCKED = true;
+      REMOTE_BOOTSTRAP_MESSAGE = REMOTE_BOOTSTRAP_MESSAGE || '无法从 COS 拉取账户数据。为避免把远程账户覆盖为默认密码，请检查 COS 配置后刷新页面。';
+      CACHE[STORAGE_KEYS.users] = {};
+    }
     await loadAndOverwrite(STORAGE_KEYS.feedbacks, true);
     await loadAndOverwrite(STORAGE_KEYS.notifications, true);
     await loadAndOverwrite(STORAGE_KEYS.metadata, true);
@@ -576,7 +611,7 @@ async function initData() {
   }
 
   // 3. 确保默认数据结构存在（仅当 COS 也空时）
-  if (!CACHE[STORAGE_KEYS.users] || Object.keys(CACHE[STORAGE_KEYS.users]).length === 0) {
+  if (!REMOTE_BOOTSTRAP_BLOCKED && (!CACHE[STORAGE_KEYS.users] || Object.keys(CACHE[STORAGE_KEYS.users]).length === 0)) {
     CACHE[STORAGE_KEYS.users] = {
       ziy111: { password: '', role: 'admin', created_at: new Date().toISOString(), _needs_hash: true }
     };
@@ -610,6 +645,7 @@ async function flushAllPending() {
 }
 
 async function initAdminPassword() {
+  if (REMOTE_BOOTSTRAP_BLOCKED) return;
   var users = loadData(STORAGE_KEYS.users);
   if (users && users.ziy111 && users.ziy111._needs_hash) {
     users.ziy111.password = await hashPassword('123456');
@@ -2121,14 +2157,14 @@ function renderSiteTable(site) {
       var editable = canManageSiteRow(row);
       var isEditing = siteEditingRowId === row.id;
       html += '<tr data-row-id="' + row.id + '">';
-      html += '<td>' + (index + 1) + '</td>';
-      html += '<td>' + renderSiteTableCell(row, 'image_url', isEditing) + '</td>';
-      html += '<td>' + renderSiteTableCell(row, 'instrument_type', isEditing) + '</td>';
-      html += '<td>' + renderSiteTableCell(row, 'device_code', isEditing) + '</td>';
-      html += '<td>' + renderSiteTableCell(row, 'location', isEditing) + '</td>';
-      html += '<td>' + renderSiteTableCell(row, 'model', isEditing) + '</td>';
-      html += '<td>' + renderSiteTableCell(row, 'remark', isEditing) + '</td>';
-      if (showActions) html += '<td>' + renderSiteRowActions(row, editable, isEditing) + '</td>';
+      html += '<td data-label="序号">' + (index + 1) + '</td>';
+      html += '<td data-label="位置图片">' + renderSiteTableCell(row, 'image_url', isEditing) + '</td>';
+      html += '<td data-label="仪表类型">' + renderSiteTableCell(row, 'instrument_type', isEditing) + '</td>';
+      html += '<td data-label="设备编号">' + renderSiteTableCell(row, 'device_code', isEditing) + '</td>';
+      html += '<td data-label="所属位置">' + renderSiteTableCell(row, 'location', isEditing) + '</td>';
+      html += '<td data-label="型号">' + renderSiteTableCell(row, 'model', isEditing) + '</td>';
+      html += '<td data-label="备注">' + renderSiteTableCell(row, 'remark', isEditing) + '</td>';
+      if (showActions) html += '<td data-label="操作">' + renderSiteRowActions(row, editable, isEditing) + '</td>';
       html += '</tr>';
     });
   }
@@ -4369,6 +4405,14 @@ async function initApp() {
   bindGlobalEvents();
   bindLoginPrefsEvents();
   applySavedLoginPrefs();
+
+  if (REMOTE_BOOTSTRAP_BLOCKED) {
+    if ($('loginError')) {
+      $('loginError').textContent = REMOTE_BOOTSTRAP_MESSAGE;
+      $('loginError').style.display = 'block';
+    }
+    showToast(REMOTE_BOOTSTRAP_MESSAGE, true);
+  }
 
   window.addEventListener('beforeunload', function () {
     var keys = Object.keys(PENDING_SAVES);
