@@ -1,4 +1,4 @@
-const CACHE_NAME = 'feedback-pwa-v1';
+﻿const CACHE_NAME = 'feedback-pwa-v2';
 const APP_SHELL = [
   './',
   './index.html',
@@ -6,6 +6,7 @@ const APP_SHELL = [
   './css/style.css',
   './js/app.js',
   './vendor/cos-js-sdk-v5.min.js',
+  './vendor/exceljs.min.js',
   './icons/icon-180.png',
   './icons/icon-192.png',
   './icons/icon-512.png'
@@ -50,3 +51,5 @@ self.addEventListener('fetch', (event) => {
     })
   );
 });
+
+

@@ -81,6 +81,8 @@ const STORAGE_KEYS = {
   notifications: 'host_notifications',
   metadata: 'host_metadata',
   documents: 'host_documents',
+  siteDirectory: 'host_site_directory',
+  siteRecords: 'host_site_records',
   authPrefs: 'host_auth_prefs'
 };
 
@@ -108,6 +110,53 @@ function formatSize(bytes) {
   if (!bytes) return '0 B';
   if (bytes > 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
   return (bytes / 1024).toFixed(1) + ' KB';
+}
+
+function sanitizeFilename(name) {
+  return (name || 'export').replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, ' ').trim() || 'export';
+}
+
+function blobToDataUrl(blob) {
+  return new Promise(function (resolve, reject) {
+    var reader = new FileReader();
+    reader.onload = function () { resolve(reader.result); };
+    reader.onerror = function () { reject(new Error('读取文件失败')); };
+    reader.readAsDataURL(blob);
+  });
+}
+
+function dataUrlByteSize(dataUrl) {
+  if (!dataUrl || dataUrl.indexOf(',') === -1) return 0;
+  var base64 = dataUrl.split(',')[1] || '';
+  var padding = 0;
+  if (base64.endsWith('==')) padding = 2;
+  else if (base64.endsWith('=')) padding = 1;
+  return Math.floor(base64.length * 3 / 4) - padding;
+}
+
+function canvasToBlob(canvas, type, quality) {
+  return new Promise(function (resolve, reject) {
+    canvas.toBlob(function (blob) {
+      if (blob) resolve(blob);
+      else reject(new Error('图片处理失败'));
+    }, type, quality);
+  });
+}
+
+function loadImageFromBlob(blob) {
+  return new Promise(function (resolve, reject) {
+    var img = new Image();
+    var objectUrl = URL.createObjectURL(blob);
+    img.onload = function () {
+      URL.revokeObjectURL(objectUrl);
+      resolve(img);
+    };
+    img.onerror = function () {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error('图片加载失败'));
+    };
+    img.src = objectUrl;
+  });
 }
 
 function showToast(msg, isError) {
@@ -391,6 +440,96 @@ async function syncFromRemote(key, expectedType) {
   } catch (e) { return false; }
 }
 
+var REMOTE_SYNC_INTERVAL_MS = 8000;
+var remoteSyncTimer = null;
+var remoteSyncInProgress = false;
+
+function getSortedMetadata() {
+  return getMetadata().sort(function (a, b) {
+    return (b.upload_time || '') > (a.upload_time || '') ? 1 : -1;
+  });
+}
+
+function getSortedDocuments() {
+  return getDocuments().sort(function (a, b) {
+    return (b.upload_time || '') > (a.upload_time || '') ? 1 : -1;
+  });
+}
+
+function getSortedSiteDirectory() {
+  return getSiteDirectory().sort(function (a, b) {
+    return (a.name || '').localeCompare(b.name || '', 'zh-CN');
+  });
+}
+
+function stringifyForCompare(data) {
+  try { return JSON.stringify(data || null); } catch (e) { return ''; }
+}
+
+async function syncRemoteKeyIfChanged(key, expectedType) {
+  if (PENDING_SAVES[key]) return false;
+  var before = stringifyForCompare(loadData(key));
+  var ok = await syncFromRemote(key, expectedType);
+  if (!ok) return false;
+  return before !== stringifyForCompare(loadData(key));
+}
+
+function applyRemoteDataChanges(changedKeys) {
+  if (!changedKeys.length || !currentUser()) return;
+  var changed = {};
+  changedKeys.forEach(function (key) { changed[key] = true; });
+
+  if (changed[STORAGE_KEYS.notifications]) {
+    updateUnreadBadge();
+    if (notificationPanelOpen) loadNotificationsForUI();
+  }
+
+  if (changed[STORAGE_KEYS.metadata]) {
+    allImagesCache = getSortedMetadata();
+    if (currentPage === 'gallery') renderGallery(allImagesCache);
+    if (currentPage === 'main') loadImagesForFeedback();
+  }
+
+  if (changed[STORAGE_KEYS.documents]) {
+    if (currentPage === 'docs') renderDocList(getSortedDocuments());
+    if (currentPage === 'main' && typeof DocIntegration !== 'undefined' && DocIntegration.refreshFeedbackDocSelector) {
+      DocIntegration.refreshFeedbackDocSelector();
+    }
+  }
+
+  if (changed[STORAGE_KEYS.feedbacks]) {
+    if (currentPage === 'main') loadFeedbacks();
+  }
+
+  if (changed[STORAGE_KEYS.siteDirectory] || changed[STORAGE_KEYS.siteRecords]) {
+    if (currentPage === 'sites') renderSitesPage();
+  }
+}
+
+async function syncRemoteSharedData() {
+  if (remoteSyncInProgress || !getCosClient() || !currentUser()) return;
+  remoteSyncInProgress = true;
+  try {
+    var changedKeys = [];
+    if (await syncRemoteKeyIfChanged(STORAGE_KEYS.metadata, 'array')) changedKeys.push(STORAGE_KEYS.metadata);
+    if (await syncRemoteKeyIfChanged(STORAGE_KEYS.documents, 'array')) changedKeys.push(STORAGE_KEYS.documents);
+    if (await syncRemoteKeyIfChanged(STORAGE_KEYS.feedbacks, 'array')) changedKeys.push(STORAGE_KEYS.feedbacks);
+    if (await syncRemoteKeyIfChanged(STORAGE_KEYS.notifications, 'array')) changedKeys.push(STORAGE_KEYS.notifications);
+    if (await syncRemoteKeyIfChanged(STORAGE_KEYS.siteDirectory, 'array')) changedKeys.push(STORAGE_KEYS.siteDirectory);
+    if (await syncRemoteKeyIfChanged(STORAGE_KEYS.siteRecords, 'object')) changedKeys.push(STORAGE_KEYS.siteRecords);
+    applyRemoteDataChanges(changedKeys);
+  } finally {
+    remoteSyncInProgress = false;
+  }
+}
+
+function startRemoteSyncLoop() {
+  if (remoteSyncTimer) clearInterval(remoteSyncTimer);
+  if (!getCosClient()) return;
+  syncRemoteSharedData();
+  remoteSyncTimer = setInterval(syncRemoteSharedData, REMOTE_SYNC_INTERVAL_MS);
+}
+
 async function initData() {
   // 1. 先读取本地数据作为后备
   var localUsers = localStorage.getItem(STORAGE_KEYS.users);
@@ -398,12 +537,16 @@ async function initData() {
   var localNotifs = localStorage.getItem(STORAGE_KEYS.notifications);
   var localMeta = localStorage.getItem(STORAGE_KEYS.metadata);
   var localDocs = localStorage.getItem(STORAGE_KEYS.documents);
+  var localSiteDirectory = localStorage.getItem(STORAGE_KEYS.siteDirectory);
+  var localSiteRecords = localStorage.getItem(STORAGE_KEYS.siteRecords);
   
   CACHE[STORAGE_KEYS.users] = localUsers ? JSON.parse(localUsers) : null;
   CACHE[STORAGE_KEYS.feedbacks] = localFbs ? JSON.parse(localFbs) : null;
   CACHE[STORAGE_KEYS.notifications] = localNotifs ? JSON.parse(localNotifs) : null;
   CACHE[STORAGE_KEYS.metadata] = localMeta ? JSON.parse(localMeta) : null;
   CACHE[STORAGE_KEYS.documents] = localDocs ? JSON.parse(localDocs) : null;
+  CACHE[STORAGE_KEYS.siteDirectory] = localSiteDirectory ? JSON.parse(localSiteDirectory) : null;
+  CACHE[STORAGE_KEYS.siteRecords] = localSiteRecords ? JSON.parse(localSiteRecords) : null;
   
   // 2. 如果 COS 可用，强制从 COS 拉取数据并覆盖本地（确保多设备同步）
   if (getCosClient()) {
@@ -428,6 +571,8 @@ async function initData() {
     await loadAndOverwrite(STORAGE_KEYS.notifications, true);
     await loadAndOverwrite(STORAGE_KEYS.metadata, true);
     await syncFromRemote(STORAGE_KEYS.documents, 'array');
+    await syncFromRemote(STORAGE_KEYS.siteDirectory, 'array');
+    await syncFromRemote(STORAGE_KEYS.siteRecords, 'object');
   }
 
   // 3. 确保默认数据结构存在（仅当 COS 也空时）
@@ -440,6 +585,8 @@ async function initData() {
   if (!CACHE[STORAGE_KEYS.notifications]) CACHE[STORAGE_KEYS.notifications] = [];
   if (!CACHE[STORAGE_KEYS.metadata]) CACHE[STORAGE_KEYS.metadata] = [];
   if (!CACHE[STORAGE_KEYS.documents]) CACHE[STORAGE_KEYS.documents] = [];
+  if (!CACHE[STORAGE_KEYS.siteDirectory]) CACHE[STORAGE_KEYS.siteDirectory] = [];
+  if (!CACHE[STORAGE_KEYS.siteRecords]) CACHE[STORAGE_KEYS.siteRecords] = {};
   
   // 4. 保存到 localStorage（确保一致性）
   saveDataLocal(STORAGE_KEYS.users, CACHE[STORAGE_KEYS.users]);
@@ -447,6 +594,8 @@ async function initData() {
   saveDataLocal(STORAGE_KEYS.notifications, CACHE[STORAGE_KEYS.notifications]);
   saveDataLocal(STORAGE_KEYS.metadata, CACHE[STORAGE_KEYS.metadata]);
   saveDataLocal(STORAGE_KEYS.documents, CACHE[STORAGE_KEYS.documents]);
+  saveDataLocal(STORAGE_KEYS.siteDirectory, CACHE[STORAGE_KEYS.siteDirectory]);
+  saveDataLocal(STORAGE_KEYS.siteRecords, CACHE[STORAGE_KEYS.siteRecords]);
 }
 
 async function flushAllPending() {
@@ -606,7 +755,7 @@ const ARCHIVE_EXTENSIONS = [
   'zip', 'rar', '7z', '7zip', 'tar', 'gz', 'tgz', 
   'bz2', 'tbz2', 'xz', 'txz', 'apk', 'jar', 'war'
 ];
-const MAX_ARCHIVE_SIZE = 128 * 1024 * 1024; // 128MB
+const MAX_ARCHIVE_SIZE = 2 * 1024 * 1024 * 1024; // 2GB
 
 function isArchiveFile(filename) {
   if (!filename) return false;
@@ -1542,7 +1691,7 @@ function getFileIcon(filename) {
 function downloadFile(url, filename) {
   var a = document.createElement('a');
   a.href = url;
-  // a.download = filename;
+  if (filename) a.download = filename;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -1574,6 +1723,91 @@ function addNotification(userId, title, content, type, relatedId) {
   saveNotifications(list);
 }
 
+function getSiteDirectory() { return loadData(STORAGE_KEYS.siteDirectory) || []; }
+function saveSiteDirectory(list) { saveData(STORAGE_KEYS.siteDirectory, list); }
+function getSiteRecords() { return loadData(STORAGE_KEYS.siteRecords) || {}; }
+function saveSiteRecords(records) { saveData(STORAGE_KEYS.siteRecords, records); }
+
+var DEVICE_CODE_GUIDE = {
+  letters: [
+    ['TT', '温变'],
+    ['PT', '压变'],
+    ['FT', '流量'],
+    ['TL', '液位'],
+    ['QT', '热量'],
+    ['EI', '电表'],
+    ['FV', '调节阀']
+  ],
+  numbers: [
+    ['1xxx', '区域（高、低区等）'],
+    ['x0xx', '无意义，分割字符'],
+    ['xx1x', '1：一网，2：二网'],
+    ['xxx1', '设备序号']
+  ],
+  example: ['TT1011', '一区一网第一个温变']
+};
+
+var currentSiteViewId = 'default';
+var currentSiteSearch = '';
+var siteManageMode = false;
+var siteEditingRowId = '';
+var siteDraftRow = null;
+var siteAddPanelOpen = false;
+
+function findSiteById(siteId) {
+  return getSiteDirectory().find(function (site) { return site.id === siteId; }) || null;
+}
+
+function getSiteRows(siteId) {
+  var records = getSiteRecords();
+  return Array.isArray(records[siteId]) ? records[siteId] : [];
+}
+
+function saveSiteRows(siteId, rows) {
+  var records = Object.assign({}, getSiteRecords());
+  records[siteId] = rows;
+  saveSiteRecords(records);
+}
+
+function canManageSite(site) {
+  return !!site && (currentRole() === 'admin' || site.created_by === currentUser());
+}
+
+function canManageSiteRow(row) {
+  return currentRole() === 'admin' || row.created_by === currentUser();
+}
+
+function resetSiteManageState() {
+  siteManageMode = false;
+  siteEditingRowId = '';
+  siteDraftRow = null;
+}
+
+function buildEmptySiteRow() {
+  return {
+    id: genShortId(),
+    image_url: '',
+    image_stored_name: '',
+    image_original_name: '',
+    instrument_type: '',
+    device_code: '',
+    location: '',
+    model: '',
+    remark: '',
+    created_by: currentUser(),
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  };
+}
+
+function getCurrentSite() {
+  return currentSiteViewId === 'default' ? null : findSiteById(currentSiteViewId);
+}
+
+function getCurrentSiteRows() {
+  return currentSiteViewId === 'default' ? [] : getSiteRows(currentSiteViewId);
+}
+
 // ==================== 路由系统 ====================
 var currentPage = 'login';
 
@@ -1589,6 +1823,9 @@ function navigate(page) {
   }
   if (page === 'gallery') {
     renderGalleryPage();
+  }
+  if (page === 'sites') {
+    renderSitesPage();
   }
   if (page === 'login' || page === 'register') {
     clearSession();
@@ -1629,6 +1866,7 @@ async function handleLogin(e) {
   saveLoginPrefsFromForm(username, password);
   $('loginError').style.display = 'none';
   navigate('main');
+  startRemoteSyncLoop();
 }
 
 async function handleRegister(e) {
@@ -1673,6 +1911,10 @@ async function handleRegister(e) {
 
 async function handleLogout() {
   await flushAllPending();
+  if (remoteSyncTimer) {
+    clearInterval(remoteSyncTimer);
+    remoteSyncTimer = null;
+  }
   disableAutoLogin();
   applySavedLoginPrefs();
   clearSession();
@@ -1685,13 +1927,16 @@ function setupNavTabs() {
   html += '<a class="nav-tab" data-page="main" href="javascript:void(0)">反馈系统</a>';
   html += '<a class="nav-tab" data-page="gallery" href="javascript:void(0)">图片管理</a>';
   html += '<a class="nav-tab" data-page="docs" href="javascript:void(0)">文档管理</a>';   
+  html += '<a class="nav-tab" data-page="sites" href="javascript:void(0)">站点内容</a>';
   if (currentRole() === 'admin') {
     html += '<a class="nav-tab" data-page="admin" href="javascript:void(0)">用户管理</a>';
   }
   $('navTabs').innerHTML = html;
   if ($('navTabs2')) $('navTabs2').innerHTML = html;
   if ($('navTabs3')) $('navTabs3').innerHTML = html;
+  if ($('navTabs5')) $('navTabs5').innerHTML = html;
   if ($('navTabs4')) $('navTabs4').innerHTML = html;
+  qsa('.nav-tab[data-page="' + currentPage + '"]').forEach(function (tab) { tab.classList.add('active'); });
 
   qsa('.nav-tab').forEach(function (tab) {
     tab.addEventListener('click', function () {
@@ -1708,6 +1953,10 @@ function setupNavTabs() {
         navigate('docs');
         qsa('.nav-tab').forEach(function (t) { t.classList.remove('active'); });
         this.classList.add('active');
+      } else if (page === 'sites') {
+        navigate('sites');
+        qsa('.nav-tab').forEach(function (t) { t.classList.remove('active'); });
+        this.classList.add('active');
       } else if (page === 'admin') {
         navigate('admin');
         qsa('.nav-tab').forEach(function (t) { t.classList.remove('active'); });
@@ -1718,6 +1967,680 @@ function setupNavTabs() {
 }
 
 // ==================== 反馈系统 ====================
+async function renderSitesPage() {
+  setupNavTabs();
+  if ($('headerUsername5')) $('headerUsername5').textContent = currentUser();
+  if ($('headerRole5')) $('headerRole5').textContent = currentRole();
+  if ($('headerGroup5')) $('headerGroup5').textContent = currentGroup();
+  if (getCosClient()) {
+    if (!PENDING_SAVES[STORAGE_KEYS.siteDirectory]) await syncFromRemote(STORAGE_KEYS.siteDirectory, 'array');
+    if (!PENDING_SAVES[STORAGE_KEYS.siteRecords]) await syncFromRemote(STORAGE_KEYS.siteRecords, 'object');
+  }
+  if (currentSiteViewId !== 'default' && !findSiteById(currentSiteViewId)) currentSiteViewId = 'default';
+  renderSiteSidebar();
+  renderSiteContent();
+  updateUnreadBadge();
+}
+
+function renderSiteSidebar() {
+  var listEl = $('siteSidebarList');
+  var searchEl = $('siteSearchInput');
+  if (!listEl || !searchEl) return;
+  searchEl.value = currentSiteSearch;
+  if (!searchEl._siteBound) {
+    searchEl.addEventListener('input', function () {
+      currentSiteSearch = this.value.trim();
+      renderSiteSidebar();
+    });
+    searchEl._siteBound = true;
+  }
+
+  var sites = getSortedSiteDirectory().filter(function (site) {
+    if (!currentSiteSearch) return true;
+    return (site.name || '').toLowerCase().indexOf(currentSiteSearch.toLowerCase()) !== -1;
+  });
+
+  var html = '<button type="button" class="sidebar-item site-switch-btn' + (currentSiteViewId === 'default' ? ' active' : '') + '" data-site-view="default"><span>默认页</span></button>';
+  if (!sites.length) {
+    html += '<div class="site-sidebar-empty">暂无站点</div>';
+  } else {
+    sites.forEach(function (site) {
+      html += '<button type="button" class="sidebar-item site-switch-btn' + (currentSiteViewId === site.id ? ' active' : '') + '" data-site-view="' + site.id + '"><span>' + escapeHtml(site.name) + '</span></button>';
+    });
+  }
+  listEl.innerHTML = html;
+
+  listEl.querySelectorAll('.site-switch-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      currentSiteViewId = btn.getAttribute('data-site-view');
+      resetSiteManageState();
+      renderSitesPage();
+    });
+  });
+}
+
+function renderSiteContent() {
+  var toolbar = $('siteToolbar');
+  var body = $('siteContentBody');
+  if (!toolbar || !body) return;
+  var site = getCurrentSite();
+
+  if (!site) {
+    toolbar.innerHTML = '';
+    body.innerHTML = renderDefaultSitePage();
+    bindDefaultSitePageEvents();
+    return;
+  }
+
+  var canDeleteSite = canManageSite(site);
+  toolbar.innerHTML =
+    '<div class="site-toolbar-left">' +
+      '<button type="button" class="group-filter-btn' + (siteManageMode ? ' active' : '') + '" id="siteEditModeBtn">编辑数据</button>' +
+      '<button type="button" class="group-filter-btn" id="siteAddRowBtn">新增数据</button>' +
+      '<button type="button" class="group-filter-btn" id="siteExportBtn">导出表格</button>' +
+      '<button type="button" class="group-filter-btn" id="siteExportImageBtn">导出表格（带图片）</button>' +
+      '<button type="button" class="group-filter-btn" id="siteDeleteBtn"' + (canDeleteSite ? '' : ' disabled') + '>删除站点</button>' +
+    '</div>' +
+    '<div class="site-toolbar-right">当前站点：' + escapeHtml(site.name) + '</div>';
+
+  body.innerHTML = renderSiteTable(site);
+  bindSiteToolbarEvents();
+  bindSiteTableEvents();
+}
+
+function renderDefaultSitePage() {
+  var sites = getSortedSiteDirectory();
+  var siteItems = sites.length ? sites.map(function (site) {
+    return '<button type="button" class="site-card-item" data-open-site="' + site.id + '">' +
+      '<span class="site-card-name">' + escapeHtml(site.name) + '</span>' +
+      '<span class="site-card-meta">' + getSiteRows(site.id).length + ' 条数据</span>' +
+    '</button>';
+  }).join('') : '<div class="site-empty-card">暂无站点，先添加一个吧。</div>';
+
+  var addPanel = '';
+  if (siteAddPanelOpen) {
+    addPanel =
+      '<div class="site-add-panel">' +
+        '<input type="text" id="newSiteNameInput" class="admin-search-input site-name-input" placeholder="输入站点名称">' +
+        '<div class="site-add-actions">' +
+          '<button type="button" class="group-filter-btn active" id="confirmAddSiteBtn">保存站点</button>' +
+          '<button type="button" class="group-filter-btn" id="cancelAddSiteBtn">取消</button>' +
+        '</div>' +
+      '</div>';
+  }
+
+  return '' +
+    '<div class="site-default-layout">' +
+      '<div class="site-default-panel">' +
+        '<div class="site-default-heading">设备编号说明表</div>' +
+        renderDeviceGuideTable() +
+      '</div>' +
+      '<div class="site-default-divider"></div>' +
+      '<div class="site-default-panel site-default-summary">' +
+        '<div class="site-summary-header">' +
+          '<div><div class="site-default-heading">已建站点</div><div class="site-summary-sub">点击站点可直接打开对应数据表</div></div>' +
+          '<button type="button" class="upload-new-btn" id="toggleAddSiteBtn">添加站点</button>' +
+        '</div>' +
+        '<div class="site-summary-stats">' +
+          '<div class="site-stat-card"><span class="site-stat-label">站点数量</span><strong>' + sites.length + '</strong></div>' +
+          '<div class="site-stat-card"><span class="site-stat-label">总数据条数</span><strong>' + sites.reduce(function (sum, site) { return sum + getSiteRows(site.id).length; }, 0) + '</strong></div>' +
+        '</div>' +
+        addPanel +
+        '<div class="site-card-list">' + siteItems + '</div>' +
+      '</div>' +
+    '</div>';
+}
+
+function renderDeviceGuideTable() {
+  var letterRows = DEVICE_CODE_GUIDE.letters.map(function (item, idx) {
+    var prefix = idx === 0 ? '<td class="guide-section-cell" rowspan="' + DEVICE_CODE_GUIDE.letters.length + '">字母</td>' : '';
+    return '<tr>' + prefix + '<td>' + item[0] + '</td><td>' + item[1] + '</td></tr>';
+  }).join('');
+  var numberRows = DEVICE_CODE_GUIDE.numbers.map(function (item, idx) {
+    var prefix = idx === 0 ? '<td class="guide-section-cell" rowspan="' + DEVICE_CODE_GUIDE.numbers.length + '">数字</td>' : '';
+    return '<tr>' + prefix + '<td>' + item[0] + '</td><td>' + item[1] + '</td></tr>';
+  }).join('');
+  return '<table class="site-guide-table"><thead><tr><th colspan="3">设备编号说明</th></tr><tr><th></th><th>编号代码</th><th>代表内容</th></tr></thead><tbody>' + letterRows + numberRows + '<tr class="guide-example-row"><td>例</td><td>' + DEVICE_CODE_GUIDE.example[0] + '</td><td>' + DEVICE_CODE_GUIDE.example[1] + '</td></tr></tbody></table>';
+}
+
+function renderSiteTable(site) {
+  var rows = getSiteRows(site.id).slice();
+  if (siteEditingRowId && siteDraftRow) {
+    var draftExists = rows.some(function (row) { return row.id === siteEditingRowId; });
+    if (!draftExists) rows.push(siteDraftRow);
+  }
+  var showActions = siteManageMode || !!siteEditingRowId;
+  var html = '<div class="site-table-shell"><div class="site-table-title">' + escapeHtml(site.name) + '</div><div class="site-table-wrap"><table class="site-data-table"><thead><tr><th style="width:72px;">序号</th><th style="width:130px;">位置图片</th><th>仪表类型</th><th>设备编号</th><th>所属位置</th><th>型号</th><th>备注</th>';
+  if (showActions) html += '<th style="width:168px;">操作</th>';
+  html += '</tr></thead><tbody>';
+
+  if (!rows.length) {
+    html += '<tr><td colspan="' + (showActions ? 8 : 7) + '" class="site-table-empty">暂无数据，点击“新增数据”开始录入。</td></tr>';
+  } else {
+    rows.forEach(function (row, index) {
+      var editable = canManageSiteRow(row);
+      var isEditing = siteEditingRowId === row.id;
+      html += '<tr data-row-id="' + row.id + '">';
+      html += '<td>' + (index + 1) + '</td>';
+      html += '<td>' + renderSiteTableCell(row, 'image_url', isEditing) + '</td>';
+      html += '<td>' + renderSiteTableCell(row, 'instrument_type', isEditing) + '</td>';
+      html += '<td>' + renderSiteTableCell(row, 'device_code', isEditing) + '</td>';
+      html += '<td>' + renderSiteTableCell(row, 'location', isEditing) + '</td>';
+      html += '<td>' + renderSiteTableCell(row, 'model', isEditing) + '</td>';
+      html += '<td>' + renderSiteTableCell(row, 'remark', isEditing) + '</td>';
+      if (showActions) html += '<td>' + renderSiteRowActions(row, editable, isEditing) + '</td>';
+      html += '</tr>';
+    });
+  }
+
+  html += '</tbody></table></div></div>';
+  return html;
+}
+
+function getSiteRowImageUrl(row) {
+  if (!row) return '';
+  if (row.image_stored_name && row.image_stored_name.endsWith('_b64')) return row.image_url || '';
+  if (row.image_stored_name && COS_CONFIG.enabled) {
+    var cached = SIGNED_URL_CACHE[row.image_stored_name];
+    if (cached && (Date.now() - cached.time) < SIGNED_URL_TTL) return cached.url;
+    return getCosUrl(row.image_stored_name);
+  }
+  return row.image_url || '';
+}
+
+function renderSiteTableCell(row, field, isEditing) {
+  var value = isEditing && siteDraftRow ? (siteDraftRow[field] || '') : (row[field] || '');
+  if (!isEditing) {
+    if (field === 'image_url' && value) {
+      var imageUrl = getSiteRowImageUrl(row);
+      var storedName = isEditing && siteDraftRow ? (siteDraftRow.image_stored_name || '') : (row.image_stored_name || '');
+      return '<button type="button" class="site-image-thumb" data-preview-image="' + escapeHtml(imageUrl) + '"' + (storedName ? ' data-stored="' + escapeHtml(storedName) + '"' : '') + '><img src="' + escapeHtml(imageUrl) + '" alt=""></button>';
+    }
+    return '<div class="site-cell-text">' + escapeHtml(value || '-') + '</div>';
+  }
+  if (field === 'image_url') {
+    var previewUrl = siteDraftRow ? getSiteRowImageUrl(siteDraftRow) : value;
+    var previewStored = siteDraftRow ? (siteDraftRow.image_stored_name || '') : '';
+    var previewImage = previewUrl ? '<button type="button" class="site-image-thumb site-image-thumb-edit" data-preview-image="' + escapeHtml(previewUrl) + '"' + (previewStored ? ' data-stored="' + escapeHtml(previewStored) + '"' : '') + '><img src="' + escapeHtml(previewUrl) + '" alt=""></button>' : '<div class="site-image-placeholder">未上传</div>';
+    return '<div class="site-edit-cell">' +
+      previewImage +
+      '<div class="site-image-upload-actions">' +
+        '<button type="button" class="site-image-preview-link" data-site-upload-trigger="1">上传图片</button>' +
+        '<input type="file" class="site-image-file-input" accept="image/png,image/jpeg,image/jpg,image/gif,image/webp,image/bmp" style="display:none">' +
+        (previewUrl ? '<button type="button" class="site-image-preview-link" data-preview-image="' + escapeHtml(previewUrl) + '"' + (previewStored ? ' data-stored="' + escapeHtml(previewStored) + '"' : '') + '>预览</button>' : '') +
+        (previewUrl ? '<button type="button" class="site-image-preview-link site-image-remove-btn" data-site-remove-image="1">移除</button>' : '') +
+      '</div>' +
+    '</div>';
+  }
+  return '<input type="text" class="site-table-input" data-site-field="' + field + '" value="' + escapeHtml(value) + '">';
+}
+
+function renderSiteRowActions(row, editable, isEditing) {
+  if (!editable) return '<span class="site-row-lock">仅可管理自己新增的数据</span>';
+  if (isEditing) {
+    return '<div class="site-row-actions"><button type="button" class="group-filter-btn active" data-site-action="save" data-row-id="' + row.id + '">保存</button><button type="button" class="group-filter-btn" data-site-action="cancel" data-row-id="' + row.id + '">取消</button></div>';
+  }
+  return '<div class="site-row-actions"><button type="button" class="group-filter-btn" data-site-action="edit" data-row-id="' + row.id + '">修改</button><button type="button" class="group-filter-btn" data-site-action="delete" data-row-id="' + row.id + '">删除</button></div>';
+}
+
+function bindDefaultSitePageEvents() {
+  var toggleBtn = $('toggleAddSiteBtn');
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', function () {
+      siteAddPanelOpen = !siteAddPanelOpen;
+      renderSiteContent();
+    });
+  }
+  var cancelBtn = $('cancelAddSiteBtn');
+  if (cancelBtn) {
+    cancelBtn.addEventListener('click', function () {
+      siteAddPanelOpen = false;
+      renderSiteContent();
+    });
+  }
+  var confirmBtn = $('confirmAddSiteBtn');
+  if (confirmBtn) confirmBtn.addEventListener('click', createNewSite);
+  qsa('[data-open-site]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      currentSiteViewId = btn.getAttribute('data-open-site');
+      siteAddPanelOpen = false;
+      resetSiteManageState();
+      renderSitesPage();
+    });
+  });
+}
+
+function bindSiteToolbarEvents() {
+  if ($('siteEditModeBtn')) {
+    $('siteEditModeBtn').addEventListener('click', function () {
+      siteManageMode = !siteManageMode;
+      if (!siteManageMode) {
+        siteEditingRowId = '';
+        siteDraftRow = null;
+      }
+      renderSiteContent();
+    });
+  }
+  if ($('siteAddRowBtn')) {
+    $('siteAddRowBtn').addEventListener('click', function () {
+      if (currentSiteViewId === 'default') return;
+      siteManageMode = true;
+      siteDraftRow = buildEmptySiteRow();
+      siteEditingRowId = siteDraftRow.id;
+      renderSiteContent();
+    });
+  }
+  if ($('siteExportBtn')) $('siteExportBtn').addEventListener('click', exportCurrentSiteTable);
+  if ($('siteExportImageBtn')) $('siteExportImageBtn').addEventListener('click', exportCurrentSiteTableWithImages);
+  if ($('siteDeleteBtn')) $('siteDeleteBtn').addEventListener('click', deleteCurrentSite);
+}
+
+function bindSiteTableEvents() {
+  qsa('[data-preview-image]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var storedName = btn.getAttribute('data-stored');
+      if (storedName) {
+        ensureSignedUrl(storedName).then(function (url) {
+          openImageModal(url);
+        }).catch(function () {
+          openImageModal(btn.getAttribute('data-preview-image'));
+        });
+      } else {
+        openImageModal(btn.getAttribute('data-preview-image'));
+      }
+    });
+  });
+
+  qsa('.site-table-input').forEach(function (input) {
+    input.addEventListener('input', function () {
+      if (!siteDraftRow) return;
+      var field = input.getAttribute('data-site-field');
+      siteDraftRow[field] = input.value.trim();
+    });
+  });
+
+  qsa('[data-site-upload-trigger]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var input = btn.parentNode ? btn.parentNode.querySelector('.site-image-file-input') : null;
+      if (input) input.click();
+    });
+  });
+
+  qsa('.site-image-file-input').forEach(function (input) {
+    input.addEventListener('change', async function () {
+      if (!this.files || !this.files[0] || !siteDraftRow) return;
+      var file = this.files[0];
+      try {
+        showTransferProgress(0, '上传图片');
+        var result = await uploadImage(file, function (progressData) {
+          var percent = typeof progressData === 'number' ? progressData : (progressData && progressData.percent * 100);
+          showTransferProgress(percent || 0, '上传图片');
+        });
+        siteDraftRow.image_url = result.url || '';
+        siteDraftRow.image_stored_name = result.stored_name || '';
+        siteDraftRow.image_original_name = result.original_name || file.name;
+        completeTransferProgress('图片上传完成');
+        renderSiteContent();
+      } catch (err) {
+        showTransferProgress();
+        showToast('上传失败: ' + (err.message || err), true);
+      }
+      this.value = '';
+    });
+  });
+
+  qsa('[data-site-remove-image]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      if (!siteDraftRow) return;
+      siteDraftRow.image_url = '';
+      siteDraftRow.image_stored_name = '';
+      siteDraftRow.image_original_name = '';
+      renderSiteContent();
+    });
+  });
+
+  qsa('[data-site-action]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var action = btn.getAttribute('data-site-action');
+      var rowId = btn.getAttribute('data-row-id');
+      if (action === 'edit') beginSiteRowEdit(rowId);
+      if (action === 'save') saveSiteRow(rowId);
+      if (action === 'cancel') {
+        siteEditingRowId = '';
+        siteDraftRow = null;
+        renderSiteContent();
+      }
+      if (action === 'delete') deleteSiteRow(rowId);
+    });
+  });
+
+  setTimeout(function () {
+    qsa('.site-image-thumb[data-stored] img').forEach(function (img) {
+      var holder = img.parentNode;
+      if (!holder) return;
+      var storedName = holder.getAttribute('data-stored');
+      if (!storedName) return;
+      ensureSignedUrl(storedName).then(function (signedUrl) {
+        if (img.src !== signedUrl) img.src = signedUrl;
+        holder.setAttribute('data-preview-image', signedUrl);
+      }).catch(function () {});
+    });
+  }, 0);
+}
+
+function beginSiteRowEdit(rowId) {
+  var row = getCurrentSiteRows().find(function (item) { return item.id === rowId; });
+  if (!row) return;
+  if (!canManageSiteRow(row)) {
+    showToast('仅可编辑自己新增的数据', true);
+    return;
+  }
+  siteManageMode = true;
+  siteEditingRowId = rowId;
+  siteDraftRow = Object.assign({}, row);
+  renderSiteContent();
+}
+
+function saveSiteRow(rowId) {
+  var site = getCurrentSite();
+  if (!site || !siteDraftRow || siteEditingRowId !== rowId) return;
+  if (!siteDraftRow.device_code.trim()) {
+    showToast('设备编号不能为空', true);
+    return;
+  }
+  var rows = getSiteRows(site.id).slice();
+  var index = rows.findIndex(function (row) { return row.id === rowId; });
+  siteDraftRow.updated_at = new Date().toISOString();
+  if (index === -1) {
+    rows.push(Object.assign({}, siteDraftRow));
+  } else {
+    if (!canManageSiteRow(rows[index])) {
+      showToast('仅可编辑自己新增的数据', true);
+      return;
+    }
+    rows[index] = Object.assign({}, rows[index], siteDraftRow);
+  }
+  saveSiteRows(site.id, rows);
+  siteEditingRowId = '';
+  siteDraftRow = null;
+  renderSiteContent();
+}
+
+function deleteSiteRow(rowId) {
+  var site = getCurrentSite();
+  if (!site) return;
+  var rows = getSiteRows(site.id).slice();
+  var target = rows.find(function (row) { return row.id === rowId; });
+  if (!target) return;
+  if (!canManageSiteRow(target)) {
+    showToast('仅可删除自己新增的数据', true);
+    return;
+  }
+  if (!confirm('确定删除这条数据吗？')) return;
+  rows = rows.filter(function (row) { return row.id !== rowId; });
+  saveSiteRows(site.id, rows);
+  if (siteEditingRowId === rowId) {
+    siteEditingRowId = '';
+    siteDraftRow = null;
+  }
+  renderSiteContent();
+}
+
+async function createNewSite() {
+  var input = $('newSiteNameInput');
+  var rawName = input ? input.value.trim() : '';
+  if (!rawName) {
+    showToast('请输入站点名称', true);
+    return;
+  }
+  var sites = getSiteDirectory().slice();
+  if (sites.some(function (site) { return (site.name || '').toLowerCase() === rawName.toLowerCase(); })) {
+    showToast('站点名称已存在', true);
+    return;
+  }
+  var site = { id: genShortId(), name: rawName, created_by: currentUser(), created_at: new Date().toISOString() };
+  sites.push(site);
+  var records = Object.assign({}, getSiteRecords());
+  records[site.id] = [];
+  await saveDataNow(STORAGE_KEYS.siteDirectory, sites);
+  await saveDataNow(STORAGE_KEYS.siteRecords, records);
+  currentSiteViewId = site.id;
+  currentSiteSearch = '';
+  siteAddPanelOpen = false;
+  resetSiteManageState();
+  renderSitesPage();
+}
+
+async function exportCurrentSiteTable() {
+  var site = getCurrentSite();
+  if (!site) {
+    showToast('默认页无需导出', true);
+    return;
+  }
+  var rows = getCurrentSiteRows();
+  var imageUrls = await Promise.all(rows.map(async function (row) {
+    if (row.image_stored_name) {
+      try {
+        return await ensureSignedUrl(row.image_stored_name, row.image_original_name || 'site-image');
+      } catch (err) {
+        return row.image_url || '';
+      }
+    }
+    return row.image_url || '';
+  }));
+  var html = '<table border="1"><thead><tr><th colspan="7">' + escapeHtml(site.name) + '</th></tr><tr><th>序号</th><th>位置图片</th><th>仪表类型</th><th>设备编号</th><th>所属位置</th><th>型号</th><th>备注</th></tr></thead><tbody>';
+  rows.forEach(function (row, index) {
+    var imageCell = imageUrls[index] ? '<img src="' + escapeHtml(imageUrls[index]) + '" style="width:88px;height:88px;object-fit:cover;display:block;">' : '';
+    html += '<tr><td>' + (index + 1) + '</td><td>' + imageCell + '</td><td>' + escapeHtml(row.instrument_type || '') + '</td><td>' + escapeHtml(row.device_code || '') + '</td><td>' + escapeHtml(row.location || '') + '</td><td>' + escapeHtml(row.model || '') + '</td><td>' + escapeHtml(row.remark || '') + '</td></tr>';
+  });
+  html += '</tbody></table>';
+  var blob = new Blob(['\ufeff' + html], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+  var url = URL.createObjectURL(blob);
+  downloadFile(url, site.name + '.xls');
+  setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+}
+
+async function deleteCurrentSite() {
+  var site = getCurrentSite();
+  if (!site) {
+    showToast('默认页无需删除站点', true);
+    return;
+  }
+  if (!canManageSite(site)) {
+    showToast('仅可删除自己新增的站点', true);
+    return;
+  }
+  if (!confirm('确定删除站点“' + site.name + '”及其全部内容吗？此操作不可恢复。')) return;
+  var nextSites = getSiteDirectory().filter(function (item) { return item.id !== site.id; });
+  var nextRecords = Object.assign({}, getSiteRecords());
+  delete nextRecords[site.id];
+  await saveDataNow(STORAGE_KEYS.siteDirectory, nextSites);
+  await saveDataNow(STORAGE_KEYS.siteRecords, nextRecords);
+  currentSiteViewId = 'default';
+  currentSiteSearch = '';
+  siteAddPanelOpen = false;
+  resetSiteManageState();
+  showToast('站点已删除');
+  renderSitesPage();
+}
+
+function getSiteExportRows() {
+  return getCurrentSiteRows().map(function (row, index) {
+    return {
+      index: index + 1,
+      image_url: row.image_url || '',
+      image_stored_name: row.image_stored_name || '',
+      image_original_name: row.image_original_name || '',
+      instrument_type: row.instrument_type || '',
+      device_code: row.device_code || '',
+      location: row.location || '',
+      model: row.model || '',
+      remark: row.remark || ''
+    };
+  });
+}
+
+async function exportCurrentSiteTable() {
+  var site = getCurrentSite();
+  if (!site) {
+    showToast('默认页无需导出', true);
+    return;
+  }
+  var rows = getSiteExportRows();
+  var html = '<table border="1"><thead><tr><th colspan="6">' + escapeHtml(site.name) + '</th></tr><tr><th>序号</th><th>仪表类型</th><th>设备编号</th><th>所属位置</th><th>型号</th><th>备注</th></tr></thead><tbody>';
+  rows.forEach(function (row) {
+    html += '<tr><td>' + row.index + '</td><td>' + escapeHtml(row.instrument_type) + '</td><td>' + escapeHtml(row.device_code) + '</td><td>' + escapeHtml(row.location) + '</td><td>' + escapeHtml(row.model) + '</td><td>' + escapeHtml(row.remark) + '</td></tr>';
+  });
+  html += '</tbody></table>';
+  var blob = new Blob(['\ufeff' + html], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+  var url = URL.createObjectURL(blob);
+  downloadFile(url, sanitizeFilename(site.name) + '.xls');
+  setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+}
+
+async function resolveSiteRowImageSource(row) {
+  if (!row) return '';
+  if (row.image_stored_name) {
+    try {
+      return await ensureSignedUrl(row.image_stored_name, row.image_original_name || 'site-image');
+    } catch (err) {}
+  }
+  return row.image_url || '';
+}
+
+async function compressImageForExcel(imageUrl, maxBytes) {
+  var response = await fetch(imageUrl);
+  if (!response.ok) throw new Error('图片下载失败');
+  var sourceBlob = await response.blob();
+  var image = await loadImageFromBlob(sourceBlob);
+  var maxEdge = Math.max(image.naturalWidth || image.width || 0, image.naturalHeight || image.height || 0);
+  var scale = maxEdge > 1440 ? 1440 / maxEdge : 1;
+  var best = null;
+
+  for (var step = 0; step < 6; step++) {
+    var width = Math.max(1, Math.round((image.naturalWidth || image.width) * scale));
+    var height = Math.max(1, Math.round((image.naturalHeight || image.height) * scale));
+    var canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    var ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, width, height);
+    ctx.drawImage(image, 0, 0, width, height);
+
+    for (var quality = 0.9; quality >= 0.35; quality -= 0.08) {
+      var outBlob = await canvasToBlob(canvas, 'image/jpeg', Math.max(0.2, quality));
+      var dataUrl = await blobToDataUrl(outBlob);
+      var size = dataUrlByteSize(dataUrl);
+      if (!best || size < best.size) best = { base64: dataUrl, size: size, width: width, height: height };
+      if (size <= maxBytes) return { base64: dataUrl, size: size, width: width, height: height };
+    }
+    scale *= 0.82;
+  }
+
+  return best;
+}
+
+function applySiteExportWorksheetStyle(worksheet, siteName) {
+  worksheet.columns = [
+    { key: 'index', width: 10 },
+    { key: 'image', width: 18 },
+    { key: 'instrument_type', width: 16 },
+    { key: 'device_code', width: 18 },
+    { key: 'location', width: 16 },
+    { key: 'model', width: 16 },
+    { key: 'remark', width: 24 }
+  ];
+  worksheet.mergeCells('A1:G1');
+  worksheet.getCell('A1').value = siteName;
+  worksheet.getCell('A1').font = { size: 14, bold: true };
+  worksheet.getCell('A1').alignment = { vertical: 'middle', horizontal: 'center' };
+  worksheet.getRow(1).height = 24;
+  worksheet.getRow(2).values = ['序号', '位置图片', '仪表类型', '设备编号', '所属位置', '型号', '备注'];
+  worksheet.getRow(2).font = { bold: true };
+  worksheet.getRow(2).alignment = { vertical: 'middle', horizontal: 'center' };
+  worksheet.views = [{ state: 'frozen', ySplit: 2 }];
+}
+
+async function exportCurrentSiteTableWithImages() {
+  var site = getCurrentSite();
+  if (!site) {
+    showToast('默认页无需导出', true);
+    return;
+  }
+  if (typeof ExcelJS === 'undefined' || !ExcelJS.Workbook) {
+    showToast('Excel 导出组件未加载，请重新打开应用后再试', true);
+    return;
+  }
+
+  try {
+    showTransferProgress(8, '导出带图片表格');
+    var workbook = new ExcelJS.Workbook();
+    var worksheet = workbook.addWorksheet((site.name || '站点表格').slice(0, 31));
+    applySiteExportWorksheetStyle(worksheet, site.name || '站点表格');
+    var rows = getSiteExportRows();
+    var currentRowNumber = 3;
+
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      worksheet.addRow({
+        index: row.index,
+        image: '',
+        instrument_type: row.instrument_type,
+        device_code: row.device_code,
+        location: row.location,
+        model: row.model,
+        remark: row.remark
+      });
+      worksheet.getRow(currentRowNumber).height = 70;
+      worksheet.getRow(currentRowNumber).alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+
+      var imageUrl = await resolveSiteRowImageSource(row);
+      if (imageUrl) {
+        try {
+          var compressedImage = await compressImageForExcel(imageUrl, 300 * 1024);
+          if (compressedImage && compressedImage.base64) {
+            var imageId = workbook.addImage({ base64: compressedImage.base64, extension: 'jpeg' });
+            worksheet.addImage(imageId, {
+              tl: { col: 1.15, row: currentRowNumber - 0.85 },
+              ext: { width: 82, height: 82 },
+              editAs: 'oneCell'
+            });
+          }
+        } catch (imageErr) {}
+      }
+
+      var percent = Math.min(92, 8 + Math.round(((i + 1) / Math.max(rows.length, 1)) * 84));
+      showTransferProgress(percent, '导出带图片表格');
+      currentRowNumber += 1;
+    }
+
+    worksheet.eachRow(function (excelRow, rowNumber) {
+      excelRow.eachCell(function (cell) {
+        cell.border = {
+          top: { style: 'thin', color: { argb: 'FFD7DEE8' } },
+          left: { style: 'thin', color: { argb: 'FFD7DEE8' } },
+          bottom: { style: 'thin', color: { argb: 'FFD7DEE8' } },
+          right: { style: 'thin', color: { argb: 'FFD7DEE8' } }
+        };
+        if (rowNumber === 2) {
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
+        }
+      });
+    });
+
+    var buffer = await workbook.xlsx.writeBuffer();
+    var blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    var url = URL.createObjectURL(blob);
+    downloadFile(url, sanitizeFilename(site.name) + '（带图片）.xlsx');
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    completeTransferProgress('导出完成');
+  } catch (err) {
+    showTransferProgress();
+    showToast('导出失败：' + (err.message || err), true);
+  }
+}
+
 var selectedImages = [];
 var isDrawerOpen = false;
 var allImagesCache = [];
@@ -2685,6 +3608,8 @@ if (uploadDocBtn && docFileInput) {
     // 渲染评论区的文档预览（在生成评论区HTML后调用，用于显示已选文档）
     renderCommentDocPreview: (feedbackId) => updateCommentPreview(feedbackId),
 
+    refreshFeedbackDocSelector: () => loadDocs(),
+
     // 渲染反馈详情中的文档下载链接（接收 stored_name 数组，返回 HTML 字符串）
     renderFeedbackDocLinks: (docStoredNames) => {
       if (!docStoredNames || !docStoredNames.length) return '';
@@ -2706,14 +3631,15 @@ if (uploadDocBtn && docFileInput) {
 
 
 // ==================== 图床管理页 ====================
-function renderGalleryPage() {
+async function renderGalleryPage() {
   setupNavTabs();
   if ($('headerUsername2')) $('headerUsername2').textContent = currentUser();
   if ($('headerRole2')) $('headerRole2').textContent = currentRole();
   if ($('headerGroup2')) $('headerGroup2').textContent = currentGroup();
-  var images = getMetadata().sort(function (a, b) {
-    return (b.upload_time || '') > (a.upload_time || '') ? 1 : -1;
-  });
+  if (getCosClient()) {
+    await syncFromRemote(STORAGE_KEYS.metadata, 'array');
+  }
+  var images = getSortedMetadata();
   renderGallery(images);
   updateUnreadBadge();
 }
@@ -2740,7 +3666,7 @@ function renderGallery(images) {
         <div class="img-name" title="${escapeHtml(img.original_name)}">${escapeHtml(img.original_name)}</div>
         <div class="img-meta"><span>${escapeHtml(img.uploader)}</span><span>${formatSize(img.file_size)}</span></div>
         <div class="card-actions">
-          <button class="copy-link-btn" data-stored="${img.stored_name}" data-url="${imgUrl}">复制链接</button>
+          <button class="copy-link-btn" data-stored="${img.stored_name}" data-url="${imgUrl}" data-name="${escapeHtml(img.original_name)}">下载图片</button>
           ${canDelete ? `<button class="delete-btn" data-stored="${img.stored_name}">删除</button>` : '<button class="delete-btn" disabled>无权删除</button>'}
         </div>
       </div>
@@ -2813,10 +3739,11 @@ function renderGallery(images) {
   }, 100);
 }
 
-function refreshGallery() {
-  var imgs = getMetadata().sort(function (a, b) {
-    return (b.upload_time || '') > (a.upload_time || '') ? 1 : -1;
-  });
+async function refreshGallery() {
+  if (getCosClient()) {
+    await syncFromRemote(STORAGE_KEYS.metadata, 'array');
+  }
+  var imgs = getSortedMetadata();
   renderGallery(imgs);
   allImagesCache = imgs;
   renderExistingImages();
@@ -2875,6 +3802,7 @@ function updateUnreadBadge() {
   setBadge($('unreadBadge2'));
   setBadge($('unreadBadge3'));
   setBadge($('unreadBadge4'));
+  setBadge($('unreadBadge5'));
 }
 
 function renderNotificationList(list) {
@@ -3259,6 +4187,7 @@ function bindGlobalEvents() {
   if ($('logoutBtn2')) $('logoutBtn2').addEventListener('click', handleLogout);
   if ($('logoutBtn3')) $('logoutBtn3').addEventListener('click', handleLogout);
   if ($('logoutBtn4')) $('logoutBtn4').addEventListener('click', handleLogout);
+  if ($('logoutBtn5')) $('logoutBtn5').addEventListener('click', handleLogout);
 
   $('notificationIcon').addEventListener('click', function (e) {
     e.stopPropagation();
@@ -3274,6 +4203,10 @@ function bindGlobalEvents() {
     toggleNotificationPanel();
   });
   if ($('notificationIcon4')) $('notificationIcon4').addEventListener('click', function (e) {
+    e.stopPropagation();
+    toggleNotificationPanel();
+  });
+  if ($('notificationIcon5')) $('notificationIcon5').addEventListener('click', function (e) {
     e.stopPropagation();
     toggleNotificationPanel();
   });
@@ -3354,6 +4287,7 @@ function bindGlobalEvents() {
   if ($('changePwdLink2')) $('changePwdLink2').addEventListener('click', function (e) { e.preventDefault(); showPwdPanel(); });
   if ($('changePwdLink3')) $('changePwdLink3').addEventListener('click', function (e) { e.preventDefault(); showPwdPanel(); });
   if ($('changePwdLink4')) $('changePwdLink4').addEventListener('click', function (e) { e.preventDefault(); showPwdPanel(); });
+  if ($('changePwdLink5')) $('changePwdLink5').addEventListener('click', function (e) { e.preventDefault(); showPwdPanel(); });
   $('closePwdPanelBtn').addEventListener('click', hidePwdPanel);
   $('pwdPanelOverlay').addEventListener('click', function (e) { if (e.target === this) hidePwdPanel(); });
   $('changePwdBtn').addEventListener('click', changePassword);
@@ -3445,12 +4379,18 @@ async function initApp() {
     });
   });
 
+  window.addEventListener('focus', syncRemoteSharedData);
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) syncRemoteSharedData();
+  });
+
   if (!currentUser()) {
     await tryAutoLogin();
   }
 
   if (currentUser()) {
     navigate('main');
+    startRemoteSyncLoop();
   } else {
     navigate('login');
   }
@@ -3608,4 +4548,150 @@ function downloadWithProgress(key, originalName) {
     });
   });
 }
+/*
+function checkArchiveSize(file) {
+  if (isArchiveFile(file.name) && file.size > MAX_ARCHIVE_SIZE) {
+    showToast('涓婁紶鐨勫帇缂╁寘涓嶈兘瓒呰繃2GB', true);
+    return false;
+  }
+  return true;
+}
+
+function uploadToCosGeneric(file, onProgress) {
+  console.log('>>> uploadToCosGeneric 琚皟鐢紝鏂囨。:', file.name, file.size);
+  return new Promise((resolve, reject) => {
+    if (!checkArchiveSize(file)) {
+      reject(new Error('涓婁紶鐨勫帇缂╁寘涓嶈兘瓒呰繃2GB'));
+      return;
+    }
+    if (!COS_CONFIG.enabled || !COS_CONFIG.SecretId) {
+      reject(new Error('COS鏈厤缃?));
+      return;
+    }
+    var cos = new COS({
+      SecretId: COS_CONFIG.SecretId,
+      SecretKey: COS_CONFIG.SecretKey
+    });
+    var ext = file.name.split('.').pop().toLowerCase();
+    var key = genShortId() + '.' + ext;
+    cos.putObject({
+      Bucket: COS_CONFIG.Bucket,
+      Region: COS_CONFIG.Region,
+      Key: key,
+      Body: file,
+      onProgress: function(progressData) {
+        console.log('COS 鍘熷杩涘害:', progressData.percent);
+        if (onProgress) onProgress(progressData.percent * 100);
+      }
+    }, function (err) {
+      if (err) reject(err);
+      else resolve({
+        stored_name: key,
+        original_name: file.name,
+        file_size: file.size
+      });
+    });
+  });
+}
+
+async function handleGalleryImageDownloadClick(btn) {
+  var storedName = btn.getAttribute('data-stored');
+  var fallbackUrl = btn.getAttribute('data-url');
+  var originalName = btn.getAttribute('data-name') || 'image';
+  if (storedName && !storedName.endsWith('_b64')) {
+    await downloadWithProgress(storedName, originalName);
+    return;
+  }
+  var url = fallbackUrl;
+  if (!url && storedName) url = await ensureSignedUrl(storedName, originalName);
+  if (!url) throw new Error('DOWNLOAD_URL_MISSING');
+  downloadFile(url, originalName);
+}
+
+document.addEventListener('click', function (e) {
+  var btn = e.target.closest('.copy-link-btn');
+  if (!btn) return;
+  e.preventDefault();
+  e.stopPropagation();
+  if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+  handleGalleryImageDownloadClick(btn).then(function () {
+    showToast('鍥剧墖涓嬭浇宸插紑濮?);
+  }).catch(function (err) {
+    showToast('涓嬭浇澶辫触锛? + (err.message || err), true);
+  });
+}, true);
+*/
+
+function checkArchiveSize(file) {
+  if (isArchiveFile(file.name) && file.size > MAX_ARCHIVE_SIZE) {
+    showToast('Archive file must be 2GB or smaller', true);
+    return false;
+  }
+  return true;
+}
+
+function uploadToCosGeneric(file, onProgress) {
+  console.log('>>> uploadToCosGeneric called:', file.name, file.size);
+  return new Promise((resolve, reject) => {
+    if (!checkArchiveSize(file)) {
+      reject(new Error('Archive file must be 2GB or smaller'));
+      return;
+    }
+    if (!COS_CONFIG.enabled || !COS_CONFIG.SecretId) {
+      reject(new Error('COS not configured'));
+      return;
+    }
+    var cos = new COS({
+      SecretId: COS_CONFIG.SecretId,
+      SecretKey: COS_CONFIG.SecretKey
+    });
+    var ext = file.name.split('.').pop().toLowerCase();
+    var key = genShortId() + '.' + ext;
+    cos.putObject({
+      Bucket: COS_CONFIG.Bucket,
+      Region: COS_CONFIG.Region,
+      Key: key,
+      Body: file,
+      onProgress: function (progressData) {
+        console.log('COS raw progress:', progressData.percent);
+        if (onProgress) onProgress(progressData.percent * 100);
+      }
+    }, function (err) {
+      if (err) reject(err);
+      else resolve({
+        stored_name: key,
+        original_name: file.name,
+        file_size: file.size
+      });
+    });
+  });
+}
+
+async function handleGalleryImageDownloadClick(btn) {
+  var storedName = btn.getAttribute('data-stored');
+  var fallbackUrl = btn.getAttribute('data-url');
+  var originalName = btn.getAttribute('data-name') || 'image';
+  if (storedName && !storedName.endsWith('_b64')) {
+    await downloadWithProgress(storedName, originalName);
+    return;
+  }
+  var url = fallbackUrl;
+  if (!url && storedName) url = await ensureSignedUrl(storedName, originalName);
+  if (!url) throw new Error('DOWNLOAD_URL_MISSING');
+  downloadFile(url, originalName);
+}
+
+document.addEventListener('click', function (e) {
+  var btn = e.target.closest('.copy-link-btn');
+  if (!btn) return;
+  e.preventDefault();
+  e.stopPropagation();
+  if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+  handleGalleryImageDownloadClick(btn).then(function () {
+    showToast('Image download started');
+  }).catch(function (err) {
+    showToast('Download failed: ' + (err.message || err), true);
+  });
+}, true);
+
 document.addEventListener('DOMContentLoaded', initApp);

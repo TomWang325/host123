@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -285,6 +285,43 @@
   </div>
 </div>
 
+<!-- ========== 站点内容页 ========== -->
+<div class="page-view" id="page-sites" style="display:none">
+  <div class="container">
+    <div class="header">
+      <h1>站点内容管理</h1>
+      <div class="user-info">
+        <span id="headerUsername5"></span> (<span id="headerRole5"></span>) [<span id="headerGroup5"></span>组]
+        <span class="notification-icon" id="notificationIcon5">
+          消息中心 &#128276; <span class="unread-badge" id="unreadBadge5">0</span>
+        </span>
+        <a href="javascript:void(0)" id="changePwdLink5" class="admin-link">修改密码</a>
+        <a href="javascript:void(0)" id="logoutBtn5" class="logout-link">退出</a>
+      </div>
+    </div>
+
+    <div class="nav-tabs" id="navTabs5"></div>
+
+    <div class="admin-layout site-layout">
+      <div class="admin-sidebar site-sidebar">
+        <div class="sidebar-title">站点选择</div>
+        <div class="site-sidebar-search">
+          <input type="text" id="siteSearchInput" class="admin-search-input" placeholder="搜索站点名称">
+        </div>
+        <div id="siteSidebarList" class="site-sidebar-list"></div>
+      </div>
+      <div class="admin-content">
+        <div class="admin-section site-content-section">
+          <div class="site-toolbar" id="siteToolbar"></div>
+          <div id="siteContentBody"></div>
+        </div>
+      </div>
+    </div>
+
+    <footer>站点数据支持多用户协作编辑 | 管理员可管理全部数据</footer>
+  </div>
+</div>
+
 <!-- ========== 管理员页面 ========== -->
 <div class="page-view" id="page-admin" style="display:none">
   <div class="container">
@@ -444,11 +481,26 @@
   // 检测是否在 Electron 中运行
   if (window.electronAPI && window.electronAPI.isElectron) {
     // 为 body 添加特殊类，用于 CSS 适配
+    document.documentElement.classList.add('electron-mode');
     document.body.classList.add('electron-mode');
 
     // 显示自定义标题栏
     const titlebar = document.getElementById('custom-titlebar');
     if (titlebar) titlebar.style.display = 'flex';
+
+    const currentScript = document.currentScript;
+    let scrollRoot = document.getElementById('app-scroll-root');
+    if (!scrollRoot) {
+      scrollRoot = document.createElement('div');
+      scrollRoot.id = 'app-scroll-root';
+      document.body.insertBefore(scrollRoot, currentScript);
+
+      const bodyChildren = Array.from(document.body.children);
+      bodyChildren.forEach((node) => {
+        if (node === titlebar || node.id === 'transfer-progress' || node === scrollRoot || node.tagName === 'SCRIPT') return;
+        scrollRoot.appendChild(node);
+      });
+    }
 
     // 绑定窗口控制按钮
     const minimizeBtn = document.getElementById('win-minimize');
@@ -459,16 +511,63 @@
     if (maximizeBtn) maximizeBtn.onclick = () => window.electronAPI.maximizeWindow();
     if (closeBtn) closeBtn.onclick = () => window.electronAPI.closeWindow();
   }
+
+  let backToTopBtn = document.getElementById('back-to-top-btn');
+  if (!backToTopBtn) {
+    backToTopBtn = document.createElement('button');
+    backToTopBtn.id = 'back-to-top-btn';
+    backToTopBtn.type = 'button';
+    backToTopBtn.setAttribute('aria-label', '回到顶部');
+    backToTopBtn.textContent = '↑';
+    document.body.appendChild(backToTopBtn);
+  }
+
+  const scrollContainer = document.getElementById('app-scroll-root');
+  const scrollThreshold = 260;
+  let scrollIndicatorTimer = null;
+  const getScrollTop = () => scrollContainer ? scrollContainer.scrollTop : (window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0);
+  const toggleBackToTopBtn = () => {
+    if (!backToTopBtn) return;
+    backToTopBtn.classList.toggle('show', getScrollTop() > scrollThreshold);
+  };
+  const toggleScrollIndicator = () => {
+    if (!scrollContainer) return;
+    scrollContainer.classList.add('scrolling');
+    if (scrollIndicatorTimer) window.clearTimeout(scrollIndicatorTimer);
+    scrollIndicatorTimer = window.setTimeout(() => {
+      scrollContainer.classList.remove('scrolling');
+    }, 700);
+  };
+  const handleScroll = () => {
+    toggleBackToTopBtn();
+    toggleScrollIndicator();
+  };
+  const scrollToTop = () => {
+    if (scrollContainer) {
+      scrollContainer.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  backToTopBtn.addEventListener('click', scrollToTop);
+  (scrollContainer || window).addEventListener('scroll', handleScroll, { passive: true });
+  toggleBackToTopBtn();
+
   document.addEventListener('contextmenu', (e) => {
     // 阻止默认浏览器右键菜单
     e.preventDefault();
-    // 根据右键点击的元素类型，传递额外信息
+
+    const image = e.target.closest && e.target.closest('img');
     const params = {
-      isImage: e.target.tagName === 'IMG',
-      src: e.target.src,
+      isImage: !!image,
+      src: image ? (image.currentSrc || image.src) : '',
+      alt: image ? image.alt : '',
+      title: image ? image.title : '',
       x: e.clientX,
       y: e.clientY
     };
+
     // 调用 Electron API 显示自定义菜单
     if (window.electronAPI) {
       window.electronAPI.showContextMenu(params);
@@ -476,6 +575,7 @@
   });
 </script>
 
+<script src="vendor/exceljs.min.js"></script>
 <script src="js/app.js"></script>
 <script>
   if ('serviceWorker' in navigator && window.location.protocol !== 'file:') {
@@ -488,3 +588,6 @@
 </script>
 </body>
 </html>
+
+
+
