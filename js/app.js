@@ -597,10 +597,11 @@ async function initData() {
     };
 
     const usersResult = await loadAndOverwrite(STORAGE_KEYS.users, false);
-    if (!usersResult.ok && !usersResult.missing && !localUsers) {
+    if (!usersResult.ok && !usersResult.missing) {
       REMOTE_BOOTSTRAP_BLOCKED = true;
       REMOTE_BOOTSTRAP_MESSAGE = REMOTE_BOOTSTRAP_MESSAGE || '无法从 COS 拉取账户数据。为避免把远程账户覆盖为默认密码，请检查 COS 配置后刷新页面。';
       CACHE[STORAGE_KEYS.users] = {};
+      localStorage.removeItem(STORAGE_KEYS.users);
     }
     await loadAndOverwrite(STORAGE_KEYS.feedbacks, true);
     await loadAndOverwrite(STORAGE_KEYS.notifications, true);
@@ -723,6 +724,10 @@ function bindLoginPrefsEvents() {
 }
 
 async function validateLogin(username, password) {
+  if (getCosClient()) {
+    var syncedUsers = await syncFromRemote(STORAGE_KEYS.users, 'object');
+    if (!syncedUsers && REMOTE_BOOTSTRAP_BLOCKED) return null;
+  }
   var users = getUsers();
   if (!users[username]) return null;
   var hashed = await hashPassword(password);
