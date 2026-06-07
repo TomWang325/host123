@@ -26,7 +26,7 @@ function saveCosConfig(cfg) {
   }));
 }
 
-function setupCos(id, key, bucket, region) {
+async function setupCos(id, key, bucket, region) {
   COS_CONFIG.enabled = true;
   COS_CONFIG.SecretId = id || COS_CONFIG.SecretId;
   COS_CONFIG.SecretKey = key || COS_CONFIG.SecretKey;
@@ -41,6 +41,11 @@ function setupCos(id, key, bucket, region) {
     cosLink.textContent = '修改COS配置';
     cosLink.style.display = 'inline';
   }
+
+  await refreshAfterCosConfig();
+  showToast('COS config saved and remote data synced');
+  setTimeout(function(){ location.reload(); }, 600);
+  return;
 
   showToast('COS配置已保存');
   setTimeout(function(){ location.reload(); }, 1000);
@@ -61,17 +66,37 @@ function hideCosSetupPanel() {
   $('cosSetupOverlay').classList.remove('show');
 }
 
-function saveSetupCos() {
+async function saveSetupCos() {
   var id = $('cosSetupId').value.trim();
   var key = $('cosSetupKey').value.trim();
   var bucket = $('cosSetupBucket').value.trim();
   var region = $('cosSetupRegion').value.trim();
+  var btn = $('cosSetupSaveBtn');
+  var previousCosConfig = Object.assign({}, COS_CONFIG);
   if (!id || !key) {
     $('cosSetupError').textContent = 'SecretId 和 SecretKey 不能为空';
     $('cosSetupError').style.display = 'block';
     return;
   }
-  setupCos(id, key, bucket, region);
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Syncing...';
+  }
+  $('cosSetupError').style.display = 'none';
+  try {
+    await setupCos(id, key, bucket, region);
+  } catch (err) {
+    saveCosConfig(previousCosConfig);
+    var msg = (err && err.message) ? err.message : String(err || 'Unknown COS error');
+    $('cosSetupError').textContent = msg;
+    $('cosSetupError').style.display = 'block';
+    showToast(msg, true);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '保存配置';
+    }
+  }
 }
 
 // ==================== localStorage 键名 ====================
@@ -632,6 +657,62 @@ async function initData() {
   saveDataLocal(STORAGE_KEYS.documents, CACHE[STORAGE_KEYS.documents]);
   saveDataLocal(STORAGE_KEYS.siteDirectory, CACHE[STORAGE_KEYS.siteDirectory]);
   saveDataLocal(STORAGE_KEYS.siteRecords, CACHE[STORAGE_KEYS.siteRecords]);
+}
+
+function describeCosError(err) {
+  if (!err) return 'COS sync failed';
+  if (typeof err === 'string') return err;
+  var parts = [];
+  if (err.statusCode) parts.push('HTTP ' + err.statusCode);
+  if (err.code) parts.push(err.code);
+  if (err.error && err.error.Code) parts.push(err.error.Code);
+  if (err.error && err.error.Message) parts.push(err.error.Message);
+  if (err.message) parts.push(err.message);
+  return parts.length ? parts.join(': ') : 'COS sync failed';
+}
+
+async function saveAllCachedDataNow() {
+  await saveDataNow(STORAGE_KEYS.users, loadData(STORAGE_KEYS.users) || {});
+  await saveDataNow(STORAGE_KEYS.feedbacks, loadData(STORAGE_KEYS.feedbacks) || []);
+  await saveDataNow(STORAGE_KEYS.notifications, loadData(STORAGE_KEYS.notifications) || []);
+  await saveDataNow(STORAGE_KEYS.metadata, loadData(STORAGE_KEYS.metadata) || []);
+  await saveDataNow(STORAGE_KEYS.documents, loadData(STORAGE_KEYS.documents) || []);
+  await saveDataNow(STORAGE_KEYS.siteDirectory, loadData(STORAGE_KEYS.siteDirectory) || []);
+  await saveDataNow(STORAGE_KEYS.siteRecords, loadData(STORAGE_KEYS.siteRecords) || {});
+}
+
+async function refreshAfterCosConfig() {
+  if (!COS_CONFIG.enabled || !COS_CONFIG.SecretId) {
+    throw new Error('COS is not configured');
+  }
+  if (typeof COS === 'undefined') {
+    throw new Error('COS SDK is not loaded');
+  }
+
+  ENC_KEY = null;
+  REMOTE_BOOTSTRAP_BLOCKED = false;
+  REMOTE_BOOTSTRAP_MESSAGE = '';
+
+  var usersProbe = await cosGetDataDetailed(STORAGE_KEYS.users);
+  if (!usersProbe.ok && !usersProbe.missing) {
+    throw new Error('Cannot read COS account data: ' + describeCosError(usersProbe.error));
+  }
+
+  await initData();
+  if (REMOTE_BOOTSTRAP_BLOCKED) {
+    throw new Error(REMOTE_BOOTSTRAP_MESSAGE || 'Cannot sync COS account data');
+  }
+
+  await initAdminPassword();
+
+  if (usersProbe.missing) {
+    await saveAllCachedDataNow();
+  }
+
+  if (currentUser()) {
+    await syncRemoteSharedData();
+    startRemoteSyncLoop();
+  }
 }
 
 async function flushAllPending() {
