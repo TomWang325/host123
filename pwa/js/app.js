@@ -43,7 +43,7 @@ async function setupCos(id, key, bucket, region) {
   }
 
   await refreshAfterCosConfig();
-  showToast('COS config saved and remote data synced');
+  showToast('COS配置已保存，并已同步云端数据');
   setTimeout(function(){ location.reload(); }, 600);
   return;
 
@@ -72,7 +72,6 @@ async function saveSetupCos() {
   var bucket = $('cosSetupBucket').value.trim();
   var region = $('cosSetupRegion').value.trim();
   var btn = $('cosSetupSaveBtn');
-  var previousCosConfig = Object.assign({}, COS_CONFIG);
   if (!id || !key) {
     $('cosSetupError').textContent = 'SecretId 和 SecretKey 不能为空';
     $('cosSetupError').style.display = 'block';
@@ -80,14 +79,14 @@ async function saveSetupCos() {
   }
   if (btn) {
     btn.disabled = true;
-    btn.textContent = 'Syncing...';
+    btn.textContent = '同步中...';
   }
   $('cosSetupError').style.display = 'none';
   try {
     await setupCos(id, key, bucket, region);
   } catch (err) {
-    saveCosConfig(previousCosConfig);
-    var msg = (err && err.message) ? err.message : String(err || 'Unknown COS error');
+    logCosReadFailure('save COS config and sync remote data', err);
+    var msg = 'COS 配置已回滚：保存后无法同步云端数据，请打开控制台查看 [COS] 日志。';
     $('cosSetupError').textContent = msg;
     $('cosSetupError').style.display = 'block';
     showToast(msg, true);
@@ -299,6 +298,7 @@ async function initEncSalt() {
         REMOTE_BOOTSTRAP_BLOCKED = true;
         REMOTE_BOOTSTRAP_MESSAGE = '读取 COS 加密盐失败，请检查 COS 配置、网络或存储桶权限。为避免覆盖远程账户数据，已暂停默认账号初始化。';
         console.warn('[COS] 读取加密盐失败:', e);
+        logCosReadFailure('read encryption salt', e);
         throw e;
       }
       /* 文件不存在，继续生成新盐 */
@@ -625,6 +625,7 @@ async function initData() {
     if (!usersResult.ok && !usersResult.missing) {
       REMOTE_BOOTSTRAP_BLOCKED = true;
       REMOTE_BOOTSTRAP_MESSAGE = REMOTE_BOOTSTRAP_MESSAGE || '无法从 COS 拉取账户数据。为避免把远程账户覆盖为默认密码，请检查 COS 配置后刷新页面。';
+      logCosReadFailure('read account data: ' + COS_DATA_PREFIX + STORAGE_KEYS.users + '.enc', usersResult.error);
       CACHE[STORAGE_KEYS.users] = {};
       localStorage.removeItem(STORAGE_KEYS.users);
     }
@@ -669,6 +670,20 @@ function describeCosError(err) {
   if (err.error && err.error.Message) parts.push(err.error.Message);
   if (err.message) parts.push(err.message);
   return parts.length ? parts.join(': ') : 'COS sync failed';
+}
+
+function logCosReadFailure(scope, err) {
+  console.group('[COS] ' + scope + ' failed');
+  console.warn('Summary:', describeCosError(err));
+  console.warn('Config:', {
+    enabled: COS_CONFIG.enabled,
+    Bucket: COS_CONFIG.Bucket,
+    Region: COS_CONFIG.Region,
+    hasSecretId: !!COS_CONFIG.SecretId,
+    hasSecretKey: !!COS_CONFIG.SecretKey
+  });
+  console.warn('Raw error:', err);
+  console.groupEnd();
 }
 
 async function saveAllCachedDataNow() {
