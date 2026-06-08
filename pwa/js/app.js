@@ -525,7 +525,13 @@ async function syncRemoteKeyIfChanged(key, expectedType) {
   if (!ok) return false;
   return before !== stringifyForCompare(loadData(key));
 }
-
+function shouldDeferRemoteRender() {
+  var active = document.activeElement;
+  if (!active) return false;
+  var tag = (active.tagName || '').toLowerCase();
+  return !!(active.closest && active.closest('#page-sites')) &&
+    (tag === 'input' || tag === 'textarea' || tag === 'select' || active.isContentEditable);
+}
 function applyRemoteDataChanges(changedKeys) {
   if (!changedKeys.length || !currentUser()) return;
   var changed = {};
@@ -554,7 +560,9 @@ function applyRemoteDataChanges(changedKeys) {
   }
 
   if (changed[STORAGE_KEYS.siteDirectory] || changed[STORAGE_KEYS.siteRecords]) {
-    if (currentPage === 'sites') renderSitesPage();
+    if (currentPage === 'sites' && !siteEditingRowId && !shouldDeferRemoteRender()) {
+      renderSitesPage();
+    }
   }
 }
 
