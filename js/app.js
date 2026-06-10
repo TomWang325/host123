@@ -26,7 +26,7 @@ function saveCosConfig(cfg) {
   }));
 }
 
-async function setupCos(id, key, bucket, region) {
+function setupCos(id, key, bucket, region) {
   COS_CONFIG.enabled = true;
   COS_CONFIG.SecretId = id || COS_CONFIG.SecretId;
   COS_CONFIG.SecretKey = key || COS_CONFIG.SecretKey;
@@ -41,11 +41,6 @@ async function setupCos(id, key, bucket, region) {
     cosLink.textContent = '修改COS配置';
     cosLink.style.display = 'inline';
   }
-
-  await refreshAfterCosConfig();
-  showToast('COS配置已保存，并已同步云端数据');
-  setTimeout(function(){ location.reload(); }, 600);
-  return;
 
   showToast('COS配置已保存');
   setTimeout(function(){ location.reload(); }, 1000);
@@ -66,36 +61,17 @@ function hideCosSetupPanel() {
   $('cosSetupOverlay').classList.remove('show');
 }
 
-async function saveSetupCos() {
+function saveSetupCos() {
   var id = $('cosSetupId').value.trim();
   var key = $('cosSetupKey').value.trim();
   var bucket = $('cosSetupBucket').value.trim();
   var region = $('cosSetupRegion').value.trim();
-  var btn = $('cosSetupSaveBtn');
   if (!id || !key) {
     $('cosSetupError').textContent = 'SecretId 和 SecretKey 不能为空';
     $('cosSetupError').style.display = 'block';
     return;
   }
-  if (btn) {
-    btn.disabled = true;
-    btn.textContent = '同步中...';
-  }
-  $('cosSetupError').style.display = 'none';
-  try {
-    await setupCos(id, key, bucket, region);
-  } catch (err) {
-    logCosReadFailure('save COS config and sync remote data', err);
-    var msg = 'COS 配置已回滚：保存后无法同步云端数据，请打开控制台查看 [COS] 日志。';
-    $('cosSetupError').textContent = msg;
-    $('cosSetupError').style.display = 'block';
-    showToast(msg, true);
-  } finally {
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = '保存配置';
-    }
-  }
+  setupCos(id, key, bucket, region);
 }
 
 // ==================== localStorage 键名 ====================
@@ -298,7 +274,6 @@ async function initEncSalt() {
         REMOTE_BOOTSTRAP_BLOCKED = true;
         REMOTE_BOOTSTRAP_MESSAGE = '读取 COS 加密盐失败，请检查 COS 配置、网络或存储桶权限。为避免覆盖远程账户数据，已暂停默认账号初始化。';
         console.warn('[COS] 读取加密盐失败:', e);
-        logCosReadFailure('read encryption salt', e);
         throw e;
       }
       /* 文件不存在，继续生成新盐 */
@@ -526,14 +501,6 @@ async function syncRemoteKeyIfChanged(key, expectedType) {
   return before !== stringifyForCompare(loadData(key));
 }
 
-function shouldDeferRemoteRender() {
-  var active = document.activeElement;
-  if (!active) return false;
-  var tag = (active.tagName || '').toLowerCase();
-  return !!(active.closest && active.closest('#page-sites')) &&
-    (tag === 'input' || tag === 'textarea' || tag === 'select' || active.isContentEditable);
-}
-
 function applyRemoteDataChanges(changedKeys) {
   if (!changedKeys.length || !currentUser()) return;
   var changed = {};
@@ -562,9 +529,7 @@ function applyRemoteDataChanges(changedKeys) {
   }
 
   if (changed[STORAGE_KEYS.siteDirectory] || changed[STORAGE_KEYS.siteRecords]) {
-    if (currentPage === 'sites' && !siteEditingRowId && !shouldDeferRemoteRender()) {
-      renderSitesPage();
-    }
+    if (currentPage === 'sites') renderSitesPage();
   }
 }
 
@@ -632,12 +597,10 @@ async function initData() {
     };
 
     const usersResult = await loadAndOverwrite(STORAGE_KEYS.users, false);
-    if (!usersResult.ok && !usersResult.missing) {
+    if (!usersResult.ok && !usersResult.missing && !localUsers) {
       REMOTE_BOOTSTRAP_BLOCKED = true;
       REMOTE_BOOTSTRAP_MESSAGE = REMOTE_BOOTSTRAP_MESSAGE || '无法从 COS 拉取账户数据。为避免把远程账户覆盖为默认密码，请检查 COS 配置后刷新页面。';
-      logCosReadFailure('read account data: ' + COS_DATA_PREFIX + STORAGE_KEYS.users + '.enc', usersResult.error);
       CACHE[STORAGE_KEYS.users] = {};
-      localStorage.removeItem(STORAGE_KEYS.users);
     }
     await loadAndOverwrite(STORAGE_KEYS.feedbacks, true);
     await loadAndOverwrite(STORAGE_KEYS.notifications, true);
@@ -668,76 +631,6 @@ async function initData() {
   saveDataLocal(STORAGE_KEYS.documents, CACHE[STORAGE_KEYS.documents]);
   saveDataLocal(STORAGE_KEYS.siteDirectory, CACHE[STORAGE_KEYS.siteDirectory]);
   saveDataLocal(STORAGE_KEYS.siteRecords, CACHE[STORAGE_KEYS.siteRecords]);
-}
-
-function describeCosError(err) {
-  if (!err) return 'COS sync failed';
-  if (typeof err === 'string') return err;
-  var parts = [];
-  if (err.statusCode) parts.push('HTTP ' + err.statusCode);
-  if (err.code) parts.push(err.code);
-  if (err.error && err.error.Code) parts.push(err.error.Code);
-  if (err.error && err.error.Message) parts.push(err.error.Message);
-  if (err.message) parts.push(err.message);
-  return parts.length ? parts.join(': ') : 'COS sync failed';
-}
-
-function logCosReadFailure(scope, err) {
-  console.group('[COS] ' + scope + ' failed');
-  console.warn('Summary:', describeCosError(err));
-  console.warn('Config:', {
-    enabled: COS_CONFIG.enabled,
-    Bucket: COS_CONFIG.Bucket,
-    Region: COS_CONFIG.Region,
-    hasSecretId: !!COS_CONFIG.SecretId,
-    hasSecretKey: !!COS_CONFIG.SecretKey
-  });
-  console.warn('Raw error:', err);
-  console.groupEnd();
-}
-
-async function saveAllCachedDataNow() {
-  await saveDataNow(STORAGE_KEYS.users, loadData(STORAGE_KEYS.users) || {});
-  await saveDataNow(STORAGE_KEYS.feedbacks, loadData(STORAGE_KEYS.feedbacks) || []);
-  await saveDataNow(STORAGE_KEYS.notifications, loadData(STORAGE_KEYS.notifications) || []);
-  await saveDataNow(STORAGE_KEYS.metadata, loadData(STORAGE_KEYS.metadata) || []);
-  await saveDataNow(STORAGE_KEYS.documents, loadData(STORAGE_KEYS.documents) || []);
-  await saveDataNow(STORAGE_KEYS.siteDirectory, loadData(STORAGE_KEYS.siteDirectory) || []);
-  await saveDataNow(STORAGE_KEYS.siteRecords, loadData(STORAGE_KEYS.siteRecords) || {});
-}
-
-async function refreshAfterCosConfig() {
-  if (!COS_CONFIG.enabled || !COS_CONFIG.SecretId) {
-    throw new Error('COS is not configured');
-  }
-  if (typeof COS === 'undefined') {
-    throw new Error('COS SDK is not loaded');
-  }
-
-  ENC_KEY = null;
-  REMOTE_BOOTSTRAP_BLOCKED = false;
-  REMOTE_BOOTSTRAP_MESSAGE = '';
-
-  var usersProbe = await cosGetDataDetailed(STORAGE_KEYS.users);
-  if (!usersProbe.ok && !usersProbe.missing) {
-    throw new Error('Cannot read COS account data: ' + describeCosError(usersProbe.error));
-  }
-
-  await initData();
-  if (REMOTE_BOOTSTRAP_BLOCKED) {
-    throw new Error(REMOTE_BOOTSTRAP_MESSAGE || 'Cannot sync COS account data');
-  }
-
-  await initAdminPassword();
-
-  if (usersProbe.missing) {
-    await saveAllCachedDataNow();
-  }
-
-  if (currentUser()) {
-    await syncRemoteSharedData();
-    startRemoteSyncLoop();
-  }
 }
 
 async function flushAllPending() {
@@ -830,10 +723,6 @@ function bindLoginPrefsEvents() {
 }
 
 async function validateLogin(username, password) {
-  if (getCosClient()) {
-    var syncedUsers = await syncFromRemote(STORAGE_KEYS.users, 'object');
-    if (!syncedUsers && REMOTE_BOOTSTRAP_BLOCKED) return null;
-  }
   var users = getUsers();
   if (!users[username]) return null;
   var hashed = await hashPassword(password);
