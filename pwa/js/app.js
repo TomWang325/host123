@@ -327,7 +327,11 @@ async function encryptData(plaintext) {
   let combined = new Uint8Array(iv.length + new Uint8Array(ciphertext).length);
   combined.set(iv);
   combined.set(new Uint8Array(ciphertext), iv.length);
-  return btoa(String.fromCharCode.apply(null, combined));
+  let binary = '';
+  for (let i = 0; i < combined.length; i++) {
+    binary += String.fromCharCode(combined[i]);
+  }
+  return btoa(binary);
 }
 
 async function decryptData(b64) {
