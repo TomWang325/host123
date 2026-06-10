@@ -26,7 +26,7 @@ function saveCosConfig(cfg) {
   }));
 }
 
-function setupCos(id, key, bucket, region) {
+async function setupCos(id, key, bucket, region) {
   COS_CONFIG.enabled = true;
   COS_CONFIG.SecretId = id || COS_CONFIG.SecretId;
   COS_CONFIG.SecretKey = key || COS_CONFIG.SecretKey;
@@ -41,6 +41,11 @@ function setupCos(id, key, bucket, region) {
     cosLink.textContent = '修改COS配置';
     cosLink.style.display = 'inline';
   }
+
+  await refreshAfterCosConfig();
+  showToast('COS配置已保存，并已同步云端数据');
+  setTimeout(function(){ location.reload(); }, 600);
+  return;
 
   showToast('COS配置已保存');
   setTimeout(function(){ location.reload(); }, 1000);
@@ -61,17 +66,36 @@ function hideCosSetupPanel() {
   $('cosSetupOverlay').classList.remove('show');
 }
 
-function saveSetupCos() {
+async function saveSetupCos() {
   var id = $('cosSetupId').value.trim();
   var key = $('cosSetupKey').value.trim();
   var bucket = $('cosSetupBucket').value.trim();
   var region = $('cosSetupRegion').value.trim();
+  var btn = $('cosSetupSaveBtn');
   if (!id || !key) {
     $('cosSetupError').textContent = 'SecretId 和 SecretKey 不能为空';
     $('cosSetupError').style.display = 'block';
     return;
   }
-  setupCos(id, key, bucket, region);
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '同步中...';
+  }
+  $('cosSetupError').style.display = 'none';
+  try {
+    await setupCos(id, key, bucket, region);
+  } catch (err) {
+    logCosReadFailure('save COS config and sync remote data', err);
+    var msg = 'COS 配置已回滚：保存后无法同步云端数据，请打开控制台查看 [COS] 日志。';
+    $('cosSetupError').textContent = msg;
+    $('cosSetupError').style.display = 'block';
+    showToast(msg, true);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '保存配置';
+    }
+  }
 }
 
 // ==================== localStorage 键名 ====================
@@ -238,6 +262,16 @@ async function hashPassword(password) {
 
 // ==================== AES-GCM 加密（多设备统一盐） ====================
 var ENC_KEY = null;
+var REMOTE_BOOTSTRAP_BLOCKED = false;
+var REMOTE_BOOTSTRAP_MESSAGE = '';
+
+function isCosNotFoundError(err) {
+  return !!(err && (
+    err.statusCode === 404 ||
+    err.code === 'NoSuchKey' ||
+    (err.error && err.error.Code === 'NoSuchKey')
+  ));
+}
 
 async function initEncSalt() {
   // 如果 COS 可用，优先从 COS 读取全局盐
@@ -259,7 +293,16 @@ async function initEncSalt() {
         localStorage.setItem('host_enc_salt', remoteSalt);
         return remoteSalt;
       }
-    } catch(e) { /* 文件不存在，继续生成新盐 */ }
+    } catch(e) {
+      if (!isCosNotFoundError(e)) {
+        REMOTE_BOOTSTRAP_BLOCKED = true;
+        REMOTE_BOOTSTRAP_MESSAGE = '读取 COS 加密盐失败，请检查 COS 配置、网络或存储桶权限。为避免覆盖远程账户数据，已暂停默认账号初始化。';
+        console.warn('[COS] 读取加密盐失败:', e);
+        logCosReadFailure('read encryption salt', e);
+        throw e;
+      }
+      /* 文件不存在，继续生成新盐 */
+    }
   }
 
   // 如果没有 COS 或远程无盐，则使用本地盐或生成新盐
@@ -333,15 +376,24 @@ function getCosClient() {
 }
 
 function cosGetData(key) {
+  return cosGetDataDetailed(key).then(function (result) {
+    return result.ok ? result.value : null;
+  });
+}
+
+function cosGetDataDetailed(key) {
   return new Promise(function (resolve) {
     var cos = getCosClient();
-    if (!cos) { resolve(null); return; }
+    if (!cos) { resolve({ ok: false, missing: false, error: 'NO_COS' }); return; }
     cos.getObject({
       Bucket: COS_CONFIG.Bucket,
       Region: COS_CONFIG.Region,
       Key: COS_DATA_PREFIX + key + '.enc'
     }, function (err, data) {
-      if (err) { resolve(null); return; }
+      if (err) {
+        resolve({ ok: false, missing: isCosNotFoundError(err), error: err });
+        return;
+      }
       var body = data.Body;
       var str = '';
       if (typeof body === 'string') {
@@ -351,12 +403,12 @@ function cosGetData(key) {
       } else if (body && body instanceof ArrayBuffer) {
         str = new TextDecoder('utf-8').decode(new Uint8Array(body));
       } else {
-        resolve(null);
+        resolve({ ok: false, missing: false, error: 'EMPTY_BODY' });
         return;
       }
       // 移除可能的首尾空白（BOM或换行）
       str = str.trim();
-      resolve(str);
+      resolve({ ok: true, missing: false, value: str });
     });
   });
 }
@@ -423,14 +475,6 @@ function saveData(key, data) {
 function saveDataNow(key, data) {
   saveDataLocal(key, data);
   return saveDataRemote(key);
-}
-
-function shouldDeferRemoteRender() {
-  var active = document.activeElement;
-  if (!active) return false;
-  var tag = (active.tagName || '').toLowerCase();
-  return !!(active.closest && active.closest('#page-sites')) &&
-    (tag === 'input' || tag === 'textarea' || tag === 'select' || active.isContentEditable);
 }
 
 async function syncFromRemote(key, expectedType) {
@@ -547,6 +591,8 @@ function startRemoteSyncLoop() {
 }
 
 async function initData() {
+  REMOTE_BOOTSTRAP_BLOCKED = false;
+  REMOTE_BOOTSTRAP_MESSAGE = '';
   // 1. 先读取本地数据作为后备
   var localUsers = localStorage.getItem(STORAGE_KEYS.users);
   var localFbs = localStorage.getItem(STORAGE_KEYS.feedbacks);
@@ -568,21 +614,29 @@ async function initData() {
   if (getCosClient()) {
     // 辅助函数：从 COS 加载并覆盖指定键
     const loadAndOverwrite = async (key, isArray = false) => {
-      const b64 = await cosGetData(key);
-      if (!b64) return false;
+      const remote = await cosGetDataDetailed(key);
+      if (!remote.ok) return remote;
+      const b64 = remote.value;
       const decrypted = await decryptData(b64);
-      if (!decrypted) return false;
+      if (!decrypted) return { ok: false, missing: false, error: 'DECRYPT_FAILED' };
       try {
         const data = JSON.parse(decrypted);
-        if (isArray && !Array.isArray(data)) return false;
-        if (!isArray && typeof data !== 'object') return false;
+        if (isArray && !Array.isArray(data)) return { ok: false, missing: false, error: 'TYPE_MISMATCH' };
+        if (!isArray && typeof data !== 'object') return { ok: false, missing: false, error: 'TYPE_MISMATCH' };
         CACHE[key] = data;
         localStorage.setItem(key, decrypted);
-        return true;
-      } catch (e) { return false; }
+        return { ok: true, missing: false };
+      } catch (e) { return { ok: false, missing: false, error: e }; }
     };
 
-    await loadAndOverwrite(STORAGE_KEYS.users, false);
+    const usersResult = await loadAndOverwrite(STORAGE_KEYS.users, false);
+    if (!usersResult.ok && !usersResult.missing) {
+      REMOTE_BOOTSTRAP_BLOCKED = true;
+      REMOTE_BOOTSTRAP_MESSAGE = REMOTE_BOOTSTRAP_MESSAGE || '无法从 COS 拉取账户数据。为避免把远程账户覆盖为默认密码，请检查 COS 配置后刷新页面。';
+      logCosReadFailure('read account data: ' + COS_DATA_PREFIX + STORAGE_KEYS.users + '.enc', usersResult.error);
+      CACHE[STORAGE_KEYS.users] = {};
+      localStorage.removeItem(STORAGE_KEYS.users);
+    }
     await loadAndOverwrite(STORAGE_KEYS.feedbacks, true);
     await loadAndOverwrite(STORAGE_KEYS.notifications, true);
     await loadAndOverwrite(STORAGE_KEYS.metadata, true);
@@ -592,7 +646,7 @@ async function initData() {
   }
 
   // 3. 确保默认数据结构存在（仅当 COS 也空时）
-  if (!CACHE[STORAGE_KEYS.users] || Object.keys(CACHE[STORAGE_KEYS.users]).length === 0) {
+  if (!REMOTE_BOOTSTRAP_BLOCKED && (!CACHE[STORAGE_KEYS.users] || Object.keys(CACHE[STORAGE_KEYS.users]).length === 0)) {
     CACHE[STORAGE_KEYS.users] = {
       ziy111: { password: '', role: 'admin', created_at: new Date().toISOString(), _needs_hash: true }
     };
@@ -614,6 +668,76 @@ async function initData() {
   saveDataLocal(STORAGE_KEYS.siteRecords, CACHE[STORAGE_KEYS.siteRecords]);
 }
 
+function describeCosError(err) {
+  if (!err) return 'COS sync failed';
+  if (typeof err === 'string') return err;
+  var parts = [];
+  if (err.statusCode) parts.push('HTTP ' + err.statusCode);
+  if (err.code) parts.push(err.code);
+  if (err.error && err.error.Code) parts.push(err.error.Code);
+  if (err.error && err.error.Message) parts.push(err.error.Message);
+  if (err.message) parts.push(err.message);
+  return parts.length ? parts.join(': ') : 'COS sync failed';
+}
+
+function logCosReadFailure(scope, err) {
+  console.group('[COS] ' + scope + ' failed');
+  console.warn('Summary:', describeCosError(err));
+  console.warn('Config:', {
+    enabled: COS_CONFIG.enabled,
+    Bucket: COS_CONFIG.Bucket,
+    Region: COS_CONFIG.Region,
+    hasSecretId: !!COS_CONFIG.SecretId,
+    hasSecretKey: !!COS_CONFIG.SecretKey
+  });
+  console.warn('Raw error:', err);
+  console.groupEnd();
+}
+
+async function saveAllCachedDataNow() {
+  await saveDataNow(STORAGE_KEYS.users, loadData(STORAGE_KEYS.users) || {});
+  await saveDataNow(STORAGE_KEYS.feedbacks, loadData(STORAGE_KEYS.feedbacks) || []);
+  await saveDataNow(STORAGE_KEYS.notifications, loadData(STORAGE_KEYS.notifications) || []);
+  await saveDataNow(STORAGE_KEYS.metadata, loadData(STORAGE_KEYS.metadata) || []);
+  await saveDataNow(STORAGE_KEYS.documents, loadData(STORAGE_KEYS.documents) || []);
+  await saveDataNow(STORAGE_KEYS.siteDirectory, loadData(STORAGE_KEYS.siteDirectory) || []);
+  await saveDataNow(STORAGE_KEYS.siteRecords, loadData(STORAGE_KEYS.siteRecords) || {});
+}
+
+async function refreshAfterCosConfig() {
+  if (!COS_CONFIG.enabled || !COS_CONFIG.SecretId) {
+    throw new Error('COS is not configured');
+  }
+  if (typeof COS === 'undefined') {
+    throw new Error('COS SDK is not loaded');
+  }
+
+  ENC_KEY = null;
+  REMOTE_BOOTSTRAP_BLOCKED = false;
+  REMOTE_BOOTSTRAP_MESSAGE = '';
+
+  var usersProbe = await cosGetDataDetailed(STORAGE_KEYS.users);
+  if (!usersProbe.ok && !usersProbe.missing) {
+    throw new Error('Cannot read COS account data: ' + describeCosError(usersProbe.error));
+  }
+
+  await initData();
+  if (REMOTE_BOOTSTRAP_BLOCKED) {
+    throw new Error(REMOTE_BOOTSTRAP_MESSAGE || 'Cannot sync COS account data');
+  }
+
+  await initAdminPassword();
+
+  if (usersProbe.missing) {
+    await saveAllCachedDataNow();
+  }
+
+  if (currentUser()) {
+    await syncRemoteSharedData();
+    startRemoteSyncLoop();
+  }
+}
+
 async function flushAllPending() {
   var keys = Object.keys(PENDING_SAVES);
   for (var i = 0; i < keys.length; i++) {
@@ -626,6 +750,7 @@ async function flushAllPending() {
 }
 
 async function initAdminPassword() {
+  if (REMOTE_BOOTSTRAP_BLOCKED) return;
   var users = loadData(STORAGE_KEYS.users);
   if (users && users.ziy111 && users.ziy111._needs_hash) {
     users.ziy111.password = await hashPassword('123456');
@@ -703,6 +828,10 @@ function bindLoginPrefsEvents() {
 }
 
 async function validateLogin(username, password) {
+  if (getCosClient()) {
+    var syncedUsers = await syncFromRemote(STORAGE_KEYS.users, 'object');
+    if (!syncedUsers && REMOTE_BOOTSTRAP_BLOCKED) return null;
+  }
   var users = getUsers();
   if (!users[username]) return null;
   var hashed = await hashPassword(password);
@@ -2137,14 +2266,14 @@ function renderSiteTable(site) {
       var editable = canManageSiteRow(row);
       var isEditing = siteEditingRowId === row.id;
       html += '<tr data-row-id="' + row.id + '">';
-      html += '<td>' + (index + 1) + '</td>';
-      html += '<td>' + renderSiteTableCell(row, 'image_url', isEditing) + '</td>';
-      html += '<td>' + renderSiteTableCell(row, 'instrument_type', isEditing) + '</td>';
-      html += '<td>' + renderSiteTableCell(row, 'device_code', isEditing) + '</td>';
-      html += '<td>' + renderSiteTableCell(row, 'location', isEditing) + '</td>';
-      html += '<td>' + renderSiteTableCell(row, 'model', isEditing) + '</td>';
-      html += '<td>' + renderSiteTableCell(row, 'remark', isEditing) + '</td>';
-      if (showActions) html += '<td>' + renderSiteRowActions(row, editable, isEditing) + '</td>';
+      html += '<td data-label="序号">' + (index + 1) + '</td>';
+      html += '<td data-label="位置图片">' + renderSiteTableCell(row, 'image_url', isEditing) + '</td>';
+      html += '<td data-label="仪表类型">' + renderSiteTableCell(row, 'instrument_type', isEditing) + '</td>';
+      html += '<td data-label="设备编号">' + renderSiteTableCell(row, 'device_code', isEditing) + '</td>';
+      html += '<td data-label="所属位置">' + renderSiteTableCell(row, 'location', isEditing) + '</td>';
+      html += '<td data-label="型号">' + renderSiteTableCell(row, 'model', isEditing) + '</td>';
+      html += '<td data-label="备注">' + renderSiteTableCell(row, 'remark', isEditing) + '</td>';
+      if (showActions) html += '<td data-label="操作">' + renderSiteRowActions(row, editable, isEditing) + '</td>';
       html += '</tr>';
     });
   }
@@ -4386,6 +4515,14 @@ async function initApp() {
   bindLoginPrefsEvents();
   applySavedLoginPrefs();
 
+  if (REMOTE_BOOTSTRAP_BLOCKED) {
+    if ($('loginError')) {
+      $('loginError').textContent = REMOTE_BOOTSTRAP_MESSAGE;
+      $('loginError').style.display = 'block';
+    }
+    showToast(REMOTE_BOOTSTRAP_MESSAGE, true);
+  }
+
   window.addEventListener('beforeunload', function () {
     var keys = Object.keys(PENDING_SAVES);
     keys.forEach(function (k) {
@@ -4523,57 +4660,44 @@ function completeTransferProgress(text = '传输完成') {
     showTransferProgress();
   }, 1200);
 }
-
-function cosBodyToBlob(body, mimeType) {
-  if (body instanceof Blob) return body;
-  if (body instanceof ArrayBuffer) return new Blob([body], { type: mimeType || 'application/octet-stream' });
-  if (ArrayBuffer.isView(body)) return new Blob([body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength)], { type: mimeType || 'application/octet-stream' });
-  if (body && body.buffer instanceof ArrayBuffer) return new Blob([body.buffer], { type: mimeType || 'application/octet-stream' });
-  if (typeof body === 'string') {
-    try {
-      var isBase64 = /^[A-Za-z0-9+/=\r\n]+$/.test(body) && body.replace(/\s/g, '').length % 4 === 0;
-      var binary = isBase64 ? atob(body) : body;
-      var bytes = new Uint8Array(binary.length);
-      for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i) & 0xff;
-      return new Blob([bytes], { type: mimeType || 'application/octet-stream' });
-    } catch (e) {
-      var fallback = new Uint8Array(body.length);
-      for (var j = 0; j < body.length; j++) fallback[j] = body.charCodeAt(j) & 0xff;
-      return new Blob([fallback], { type: mimeType || 'application/octet-stream' });
-    }
-  }
-  return new Blob([body], { type: mimeType || 'application/octet-stream' });
-}
-
-function downloadBlob(blob, filename) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename || 'download';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
-}
-
-async function downloadViaCiSignedUrl(key, originalName, progressText) {
-  if (!getCosClient()) throw new Error('COS未配置');
-  showTransferProgress(10, progressText || '下载文件');
-  const signedUrl = await generateSignedUrl(key, originalName);
-  showTransferProgress(35, progressText || '下载文件');
-  const response = await fetch(signedUrl, { cache: 'no-store' });
-  if (!response.ok) throw new Error('下载失败：HTTP ' + response.status);
-  const blob = await response.blob();
-  showTransferProgress(90, progressText || '下载文件');
-  downloadBlob(blob, originalName || key || 'download');
-  completeTransferProgress('下载完成');
-}
-
 function downloadWithProgress(key, originalName) {
   return new Promise((resolve, reject) => {
-    downloadViaCiSignedUrl(key, originalName, '下载文档').then(resolve).catch(function (err) {
-      showTransferProgress();
-      reject(err);
+    const cos = getCosClient();
+    if (!cos) {
+      reject(new Error('COS未配置'));
+      return;
+    }
+    
+    showTransferProgress(0, '下载文档');
+    
+    cos.getObject({
+      Bucket: COS_CONFIG.Bucket,
+      Region: COS_CONFIG.Region,
+      Key: key,
+      onProgress: (progressData) => {
+        const percent = progressData.percent * 100;
+        showTransferProgress(percent, '下载文档');
+      }
+    }, (err, data) => {
+      if (err) {
+        showTransferProgress();
+        reject(err);
+        return;
+      }
+      
+      // 触发浏览器下载
+      const blob = new Blob([data.Body]);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = originalName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      
+      completeTransferProgress('文档下载完成');
+      resolve();
     });
   });
 }
@@ -4628,7 +4752,7 @@ async function handleGalleryImageDownloadClick(btn) {
   var fallbackUrl = btn.getAttribute('data-url');
   var originalName = btn.getAttribute('data-name') || 'image';
   if (storedName && !storedName.endsWith('_b64')) {
-    await downloadViaCiSignedUrl(storedName, originalName, '下载图片');
+    await downloadWithProgress(storedName, originalName);
     return;
   }
   var url = fallbackUrl;
@@ -4701,7 +4825,7 @@ async function handleGalleryImageDownloadClick(btn) {
   var fallbackUrl = btn.getAttribute('data-url');
   var originalName = btn.getAttribute('data-name') || 'image';
   if (storedName && !storedName.endsWith('_b64')) {
-    await downloadViaCiSignedUrl(storedName, originalName, '下载图片');
+    await downloadWithProgress(storedName, originalName);
     return;
   }
   var url = fallbackUrl;
